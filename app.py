@@ -656,3 +656,9 @@ def _dash_redirect():
     return RedirectResponse(url="/dash/")
 
 app.mount("/dash", WSGIMiddleware(server))
+
+from fastapi.responses import RedirectResponse
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/dash/")
