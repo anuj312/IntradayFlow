@@ -14,6 +14,7 @@ import dash_bootstrap_components as dbc
 import dash_ag_grid as dag
 
 from kiteconnect import KiteConnect, KiteTicker
+from zoneinfo import ZoneInfo
 
 
 # ------------------- MOUNT PATH -------------------
@@ -457,7 +458,6 @@ def top_bottom_spike_rows(n=10):
 
         rows.append({
             "Symbol": sym,
-            "Price": _r(cur["close"], 2),
             "Change%": _r(pct_from_open(tok), 2),
             "Spike": _r(sp["spike"], 2),
         })
@@ -611,15 +611,17 @@ def top_nav(pathname: str):
 
 def sectors_page():
     common_cols = [
-        {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "StockCell", "minWidth": 170},
-        {"field": "Price", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}},
-        {"field": "Change%", "type": "rightAligned",
-         "valueFormatter": {"function": "fmtPct(params.value)"},
-         "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-        {"field": "Spike", "type": "rightAligned",
-         "valueFormatter": {"function": "fmtSigned2(params.value)"},
-         "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-    ]
+    {"field": "Symbol", "headerName": "Stock", "pinned": "left",
+     "cellRenderer": "StockCell", "minWidth": 170},
+
+    {"field": "Change%", "type": "rightAligned",
+     "valueFormatter": {"function": "fmtPct(params.value)"},
+     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
+
+    {"field": "Spike", "type": "rightAligned",
+     "valueFormatter": {"function": "fmtSigned2(params.value)"},
+     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
+]
 
     return html.Div(
         [
@@ -780,7 +782,7 @@ def route(pathname):
 
 @dash_app.callback(Output("top-stats", "children"), Input("top_refresh", "n_intervals"))
 def update_top_stats(_):
-    updated_str = datetime.now().strftime("%H:%M:%S")
+    updated_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
 
     with LOCK:
         if not SEED_DONE:
