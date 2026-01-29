@@ -301,8 +301,13 @@ def compute_sector_strength_signed():
     return out
 
 
+def _r(x, n=2):
+    try:
+        return round(float(x), n) if x is not None else None
+    except Exception:
+        return None
+
 def sector_rows_sorted_both_sides(sector: str):
-    """Grid rows: show stable per-stock spike from last completed 5m candle."""
     rows = []
     for s in SECTOR_DEFINITIONS.get(sector, []):
         tok = symbol_to_token.get(s)
@@ -324,12 +329,13 @@ def sector_rows_sorted_both_sides(sector: str):
         rows.append({
             "Symbol": s,
             "Company": symbol_to_name.get(s, ""),
-            "Price": ltp,
-            "Change": chg,
-            "Change%": chg_pct,
-            "Range/ATR": (sp["range_by_atr"] if sp else None),
-            "Spike": (sp["spike"] if sp else None),
-            "SpikeAbs": (sp["spike_abs"] if sp else None),
+            "Price": _r(ltp, 2),
+            "Change": _r(chg, 2),
+            "Change%": _r(chg_pct, 2),
+
+            "Range/ATR": _r(sp["range_by_atr"], 2) if sp else None,
+            "Spike": _r(sp["spike"], 2) if sp else None,
+            "SpikeAbs": _r(sp["spike_abs"], 2) if sp else None,
         })
 
     df = pd.DataFrame(rows)
