@@ -58,20 +58,15 @@ symbol_to_name = dict(zip(ins["tradingsymbol"], ins["name"]))
 TOKENS = sorted(symbol_to_token.values())
 
 
-# ------------------- LIVE STATE (5m aggregation) -------------------
+# ------------------- LIVE STATE (5m aggregation for Spike; Change% is from DAY_OPEN) -------------------
 LOCK = threading.Lock()
 
-CUR = {}          # token -> current 5m candle {bucket,open,high,low,close,vol_5m,synthetic?}
+CUR = {}          # token -> current 5m candle
 BARS = {}         # token -> deque of completed 5m candles
 LAST_CUMVOL = {}  # token -> last seen cumulative day volume
 
-DAY_OPEN = {}     # token -> day open (from tick.ohlc.open)
-DAY_VOL = {}      # token -> day cumulative volume (volume_traded)
-
-# Rolling sector rotation window (N=6 => last 30 minutes)
-ROLL_N = 6
-SPIKE_WIN = {}    # token -> deque of last N spikes (TODAY only)
-SPIKE_DAY = {}    # token -> date for which SPIKE_WIN is valid
+DAY_OPEN = {}     # token -> day open (market open) from tick.ohlc.open
+DAY_VOL = {}      # token -> day cumulative volume
 
 # tick stats
 LAST_TICK_TS = 0.0
@@ -97,11 +92,6 @@ def ensure(token):
         BARS[token] = deque(maxlen=300)
 
 
-def ensure_spike_win(token):
-    if token not in SPIKE_WIN:
-        SPIKE_WIN[token] = deque(maxlen=ROLL_N)
-
-
 def _record_tick_batch(count: int, last_dt: datetime | None):
     """Call only under LOCK."""
     global LAST_TICK_TS, LAST_TICK_DT, TOTAL_TICKS
@@ -125,93 +115,10 @@ def _get_tps():
     return sum(c for _, c in TPS_BUCKETS) / TPS_WINDOW_SEC
 
 
-def true_range(h, l, prev_c):
-    if prev_c is None:
-        return h - l
-    return max(h - l, abs(h - prev_c), abs(l - prev_c))
-
-
-def _spike_from_hist_and_cur(hist_bars, cur_bar, atr_n=14, rvol_n=20, use_close_quality=True):
-    """Compute spike for a specific completed bar given its history bars (all completed)."""
-    if len(hist_bars) < max(atr_n + 1, rvol_n):
-        return None
-
-    # ATR on history
-    last_completed = hist_bars[-(atr_n + 1):]
-    trs = []
-    prev_close = None
-    for b in last_completed:
-        trs.append(true_range(b["high"], b["low"], prev_close))
-        prev_close = b["close"]
-    atr = sum(trs[-atr_n:]) / atr_n if atr_n else None
-    if not atr or atr == 0:
-        return None
-
-    # RVOL baseline from history
-    vols = [b["vol_5m"] for b in hist_bars[-rvol_n:]]
-    avg_vol = (sum(vols) / len(vols)) if vols else None
-    if not avg_vol or avg_vol == 0:
-        return None
-    rvol = cur_bar["vol_5m"] / avg_vol
-
-    rng = cur_bar["high"] - cur_bar["low"]
-    range_by_atr = rng / atr
-
-    sign = 1 if cur_bar["close"] >= cur_bar["open"] else -1
-
-    cq = 1.0
-    if use_close_quality and rng > 0:
-        cq_raw = ((cur_bar["close"] - cur_bar["low"]) / rng) if sign > 0 else ((cur_bar["high"] - cur_bar["close"]) / rng)
-        cq_raw = max(0.0, min(1.0, cq_raw))
-        cq = 0.5 + 0.5 * cq_raw
-
-    spike = sign * (rvol * range_by_atr) * cq
-    return {
-        "atr": atr,
-        "rvol": rvol,
-        "range": rng,
-        "range_by_atr": range_by_atr,
-        "spike": spike,
-        "spike_abs": abs(spike),
-    }
-
-
-def compute_spike_for_token(
-    token,
-    atr_n=14,
-    rvol_n=20,
-    use_close_quality=True,
-    use_completed_bar=True,  # stable: last completed 5m candle
-):
-    """
-    If use_completed_bar=True -> compute Spike on last COMPLETED 5m candle (BARS[-1]).
-    This keeps per-stock spike stable between 5m boundaries; it updates every 5 minutes.
-    """
-    ensure(token)
-    bars = list(BARS[token])
-
-    if use_completed_bar:
-        if len(bars) < max(atr_n + 2, rvol_n + 1):
-            return None
-        cur = bars[-1]
-        hist = bars[:-1]
-        return _spike_from_hist_and_cur(hist, cur, atr_n=atr_n, rvol_n=rvol_n, use_close_quality=use_close_quality)
-
-    # (Optional) forming candle mode
-    cur = CUR.get(token)
-    if cur is None:
-        return None
-    if len(bars) < max(atr_n + 1, rvol_n):
-        return None
-    hist = bars
-    return _spike_from_hist_and_cur(hist, cur, atr_n=atr_n, rvol_n=rvol_n, use_close_quality=use_close_quality)
-
-
 def update_from_tick(tick: dict):
-    """Update day values + build 5m candle from ticks. On each candle close, update rolling spike window."""
+    """Update day values + build 5m candle from ticks."""
     token = tick["instrument_token"]
     ensure(token)
-    ensure_spike_win(token)
 
     ts = tick.get("exchange_timestamp") or datetime.now()
     ltp = tick.get("last_price")
@@ -221,6 +128,7 @@ def update_from_tick(tick: dict):
     if ltp is None or cumvol is None:
         return
 
+    # Market open baseline (does not reset intraday)
     DAY_OPEN[token] = ohlc.get("open") or DAY_OPEN.get(token)
     DAY_VOL[token] = cumvol
 
@@ -244,26 +152,10 @@ def update_from_tick(tick: dict):
 
     c = CUR[token]
     if bucket != c["bucket"]:
-        # finalize previous candle
-        finished = {
+        BARS[token].append({
             "bucket": c["bucket"], "open": c["open"], "high": c["high"], "low": c["low"],
             "close": c["close"], "vol_5m": c["vol_5m"]
-        }
-        BARS[token].append(finished)
-
-        # ---- Rolling N=6 spikes, TODAY only (sector rotation signal) ----
-        finished_day = finished["bucket"].date()
-        if SPIKE_DAY.get(token) != finished_day:
-            SPIKE_WIN[token].clear()
-            SPIKE_DAY[token] = finished_day
-
-        # spike for last completed bar (stable, updates every 5 mins)
-        sp = compute_spike_for_token(token, use_completed_bar=True)
-        if sp and sp.get("spike") is not None:
-            SPIKE_WIN[token].append(sp["spike"])
-        # ---------------------------------------------------------------
-
-        # start new current candle
+        })
         CUR[token] = {
             "bucket": bucket, "open": ltp, "high": ltp, "low": ltp,
             "close": ltp, "vol_5m": vol_delta
@@ -272,7 +164,6 @@ def update_from_tick(tick: dict):
 
     # same bucket
     if c.get("synthetic"):
-        # replace synthetic candle open with first real tick
         c["open"] = ltp
         c["synthetic"] = False
 
@@ -282,23 +173,71 @@ def update_from_tick(tick: dict):
     c["vol_5m"] += vol_delta
 
 
-def compute_sector_strength_signed():
+def true_range(h, l, prev_c):
+    if prev_c is None:
+        return h - l
+    return max(h - l, abs(h - prev_c), abs(l - prev_c))
+
+
+def compute_spike_for_token(token, atr_n=14, rvol_n=20, use_close_quality=True, use_completed_bar=True):
     """
-    Sector score = average across stocks of per-stock rolling avg spike over last N completed 5m candles.
-    Updates every 5 minutes (when a candle completes).
+    Spike is still based on 5m candles.
+    If use_completed_bar=True -> stable spike between 5m boundaries (updates every 5 mins).
     """
-    out = {}
-    for sector, syms in SECTOR_DEFINITIONS.items():
-        vals = []
-        for s in syms:
-            tok = symbol_to_token.get(s)
-            if not tok:
-                continue
-            w = SPIKE_WIN.get(tok)
-            if w and len(w) > 0:
-                vals.append(sum(w) / len(w))
-        out[sector] = (sum(vals) / len(vals)) if vals else 0.0
-    return out
+    ensure(token)
+    bars = list(BARS[token])
+
+    if use_completed_bar:
+        if len(bars) < max(atr_n + 2, rvol_n + 1):
+            return None
+        cur = bars[-1]
+        hist = bars[:-1]
+    else:
+        cur = CUR.get(token)
+        if cur is None:
+            return None
+        if len(bars) < max(atr_n + 1, rvol_n):
+            return None
+        hist = bars
+
+    # ATR
+    last_completed = hist[-(atr_n + 1):]
+    trs = []
+    prev_close = None
+    for b in last_completed:
+        trs.append(true_range(b["high"], b["low"], prev_close))
+        prev_close = b["close"]
+    atr = sum(trs[-atr_n:]) / atr_n if atr_n else None
+    if not atr or atr == 0:
+        return None
+
+    # RVOL baseline
+    vols = [b["vol_5m"] for b in hist[-rvol_n:]]
+    avg_vol = (sum(vols) / len(vols)) if vols else None
+    if not avg_vol or avg_vol == 0:
+        return None
+    rvol = cur["vol_5m"] / avg_vol
+
+    rng = cur["high"] - cur["low"]
+    range_by_atr = rng / atr
+
+    sign = 1 if cur["close"] >= cur["open"] else -1
+
+    cq = 1.0
+    if use_close_quality and rng > 0:
+        cq_raw = ((cur["close"] - cur["low"]) / rng) if sign > 0 else ((cur["high"] - cur["close"]) / rng)
+        cq_raw = max(0.0, min(1.0, cq_raw))
+        cq = 0.5 + 0.5 * cq_raw
+
+    spike = sign * (rvol * range_by_atr) * cq
+    return {
+        "atr": atr,
+        "rvol": rvol,
+        "range": rng,
+        "range_by_atr": range_by_atr,
+        "spike": spike,
+        "spike_abs": abs(spike),
+    }
 
 
 def _r(x, n=2):
@@ -307,7 +246,32 @@ def _r(x, n=2):
     except Exception:
         return None
 
-def sector_rows_sorted_both_sides(sector: str):
+
+# ------------------- SECTOR SCORE = Avg Change% from Market Open -------------------
+def compute_sector_change_pct():
+    """
+    Sector score = average of (stock % change from market open) across stocks with valid open.
+    This does NOT reset every 5 mins. It only changes as LTP changes.
+    """
+    out = {}
+    for sector, syms in SECTOR_DEFINITIONS.items():
+        vals = []
+        for s in syms:
+            tok = symbol_to_token.get(s)
+            if not tok:
+                continue
+            cur = CUR.get(tok)
+            op = DAY_OPEN.get(tok)
+            if not cur or not op:
+                continue
+            ltp = cur["close"]
+            vals.append(((ltp - op) / op) * 100.0)
+        out[sector] = (sum(vals) / len(vals)) if vals else 0.0
+    return out
+
+
+def sector_rows_sorted_by_change_pct(sector: str):
+    """Grid rows sorted by Change% from market open (descending)."""
     rows = []
     for s in SECTOR_DEFINITIONS.get(sector, []):
         tok = symbol_to_token.get(s)
@@ -319,10 +283,10 @@ def sector_rows_sorted_both_sides(sector: str):
             continue
 
         ltp = cur["close"]
-        day_open = DAY_OPEN.get(tok)
+        op = DAY_OPEN.get(tok)
 
-        chg = (ltp - day_open) if day_open else None
-        chg_pct = ((ltp - day_open) / day_open * 100.0) if day_open else None
+        chg = (ltp - op) if op else None
+        chg_pct = (((ltp - op) / op) * 100.0) if op else None
 
         sp = compute_spike_for_token(tok, use_completed_bar=True)
 
@@ -333,6 +297,7 @@ def sector_rows_sorted_both_sides(sector: str):
             "Change": _r(chg, 2),
             "Change%": _r(chg_pct, 2),
 
+            # keep spike columns (optional)
             "Range/ATR": _r(sp["range_by_atr"], 2) if sp else None,
             "Spike": _r(sp["spike"], 2) if sp else None,
             "SpikeAbs": _r(sp["spike_abs"], 2) if sp else None,
@@ -341,11 +306,12 @@ def sector_rows_sorted_both_sides(sector: str):
     df = pd.DataFrame(rows)
     if df.empty:
         return []
-    df = df.sort_values("SpikeAbs", ascending=False, na_position="last")
+    # sort stocks by % change (descending)
+    df = df.sort_values("Change%", ascending=False, na_position="last")
     return df.to_dict("records")
 
 
-# ------------------- HISTORY SEEDING (so Spike works quickly after 9:15) -------------------
+# ------------------- HISTORY SEEDING (for Spike only) -------------------
 def seed_history_once(days_back: int = 7, interval: str = "5minute", per_req_sleep: float = 0.35):
     global _seed_started, SEED_DONE, SEED_ERRORS
 
@@ -361,8 +327,6 @@ def seed_history_once(days_back: int = 7, interval: str = "5minute", per_req_sle
         total = len(TOKENS)
         SEED_PROGRESS["total"] = total
         SEED_PROGRESS["done"] = 0
-
-        today = datetime.now().date()
 
         for i, tok in enumerate(TOKENS, start=1):
             try:
@@ -380,8 +344,6 @@ def seed_history_once(days_back: int = 7, interval: str = "5minute", per_req_sle
 
             with LOCK:
                 ensure(tok)
-                ensure_spike_win(tok)
-
                 BARS[tok].clear()
 
                 for c in candles[-300:]:
@@ -395,7 +357,7 @@ def seed_history_once(days_back: int = 7, interval: str = "5minute", per_req_sle
                         "vol_5m": c.get("volume", 0) or 0,
                     })
 
-                # synthetic current candle (useful for showing Price before first live tick)
+                # synthetic CUR so Price shows before first ticks
                 if candles and tok not in CUR:
                     last_close = candles[-1]["close"]
                     CUR[tok] = {
@@ -407,20 +369,6 @@ def seed_history_once(days_back: int = 7, interval: str = "5minute", per_req_sle
                         "vol_5m": 0,
                         "synthetic": True,
                     }
-
-                # Prefill rolling window from today's completed historical 5m bars (if app starts mid-session)
-                SPIKE_WIN[tok].clear()
-                SPIKE_DAY[tok] = today
-
-                bars_list = list(BARS[tok])
-                # collect indices of bars that belong to TODAY
-                today_idxs = [idx for idx, b in enumerate(bars_list) if b["bucket"].date() == today]
-                for idx in today_idxs[-ROLL_N:]:
-                    hist = bars_list[:idx]
-                    cur = bars_list[idx]
-                    sp = _spike_from_hist_and_cur(hist, cur)
-                    if sp and sp.get("spike") is not None:
-                        SPIKE_WIN[tok].append(sp["spike"])
 
             SEED_PROGRESS["done"] = i
             time.sleep(per_req_sleep)
@@ -473,8 +421,8 @@ ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
 dash_app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.CYBORG],
-    requests_pathname_prefix=BASE,   # browser URLs (/dash/...)
-    routes_pathname_prefix="/",      # Flask after mount strips /dash
+    requests_pathname_prefix=BASE,
+    routes_pathname_prefix="/",
     assets_folder=ASSETS_DIR,
     suppress_callback_exceptions=True,
 )
@@ -506,8 +454,7 @@ def sectors_page():
         [
             html.H4("Sectors", className="page-title"),
             html.Div(id="sector-bars", className="sector-bars-wrap"),
-            html.Div("Click a sector to open stocks (sorted by SpikeAbs).", className="hint"),
-            html.Div(f"Sector strength = rolling {ROLL_N}×5m (last {ROLL_N*5} min) avg Spike.", className="hint"),
+            html.Div("Sorted by Avg Change% from Market Open (no 5m reset).", className="hint"),
         ],
         className="page-wrap",
     )
@@ -544,9 +491,11 @@ def sector_page(sector):
                      "valueFormatter": {"function": "fmtSigned2(params.value)"},
                      "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
 
+                    # DEFAULT SORT: Change% desc
                     {"field": "Change%", "type": "rightAligned",
                      "valueFormatter": {"function": "fmtPct(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
+                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
+                     "sort": "desc"},
 
                     {"field": "Range/ATR", "type": "rightAligned",
                      "valueFormatter": {"function": "fmt2(params.value)"}},
@@ -556,8 +505,7 @@ def sector_page(sector):
                      "valueFormatter": {"function": "fmtSigned2(params.value)"}},
 
                     {"field": "SpikeAbs", "headerName": "SpikeAbs", "type": "rightAligned",
-                     "valueFormatter": {"function": "fmt2(params.value)"},
-                     "sort": "desc"},
+                     "valueFormatter": {"function": "fmt2(params.value)"}},
                 ],
                 rowData=[],
                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
@@ -580,7 +528,6 @@ dash_app.layout = dbc.Container(
         dcc.Interval(id="refresh", interval=2000, n_intervals=0),
         dcc.Interval(id="top_refresh", interval=1000, n_intervals=0),
 
-        # Top bar skeleton (exists always -> safe for callbacks)
         html.Div(
             dbc.Row(
                 [
@@ -675,7 +622,7 @@ def render_sector_bars(_, pathname):
         return dash.no_update
 
     with LOCK:
-        scores = compute_sector_strength_signed()
+        scores = compute_sector_change_pct()
 
     items = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     max_abs = max([abs(v) for _, v in items] + [1e-6])
@@ -684,7 +631,7 @@ def render_sector_bars(_, pathname):
     for sector, val in items:
         h = int(30 + 260 * (abs(val) / max_abs))
         cls = "bar-green" if val >= 0 else "bar-red"
-        label = f"{val:+.2f}"
+        label = f"{val:+.2f}%"
 
         children.append(
             dcc.Link(
@@ -711,7 +658,7 @@ def update_grid(_, pathname):
     if sector not in SECTOR_DEFINITIONS:
         return []
     with LOCK:
-        return sector_rows_sorted_both_sides(sector)
+        return sector_rows_sorted_by_change_pct(sector)
 
 
 # ------------------- FASTAPI APP (export as `app`) -------------------
@@ -733,7 +680,6 @@ def health():
             "tps": round(_get_tps(), 3),
             "total_ticks": TOTAL_TICKS,
             "last_tick_time": (LAST_TICK_DT.isoformat() if LAST_TICK_DT else None),
-            "roll_n": ROLL_N,
         }
 
 @app.get("/dash")
