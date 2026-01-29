@@ -61,12 +61,16 @@ TOKENS = sorted(symbol_to_token.values())
 # ------------------- LIVE STATE -------------------
 LOCK = threading.Lock()
 
-CUR = {}          # token -> current 1m candle
-BARS = {}         # token -> deque of completed 1m candles
+CUR = {}          # token -> current 5m candle
+BARS = {}         # token -> deque of completed 5m candles
 LAST_CUMVOL = {}  # token -> last seen cumulative day volume
 
 DAY_OPEN = {}     # token -> day open (market open) from tick.ohlc.open
 DAY_VOL = {}      # token -> day cumulative volume
+
+# "Update UI 1 min before close" snapshot (freeze candle at minute-4)
+PREVIEW_MINUTE = 4
+SPIKE_SNAPSHOT = {}  # token -> snapshot candle {bucket,open,high,low,close,vol_5m}
 
 # tick stats
 LAST_TICK_TS = 0.0
@@ -90,14 +94,13 @@ def _r(x, n=2):
         return None
 
 
-def floor_1m(dt: datetime):
-    return dt.replace(second=0, microsecond=0)
+def floor_5m(dt: datetime):
+    return dt.replace(second=0, microsecond=0, minute=dt.minute - (dt.minute % 5))
 
 
 def ensure(token):
     if token not in BARS:
-        # For 1m candles, 600 keeps ~10 hours of data (enough for full session)
-        BARS[token] = deque(maxlen=600)
+        BARS[token] = deque(maxlen=300)
 
 
 def _record_tick_batch(count: int, last_dt: datetime | None):
@@ -123,8 +126,54 @@ def _get_tps():
     return sum(c for _, c in TPS_BUCKETS) / TPS_WINDOW_SEC
 
 
+def _take_snapshot_if_due(token: int, now_dt: datetime):
+    """
+    Freeze current 5m candle at minute-4 of the bucket.
+    Example: bucket 09:15 -> snapshot at 09:19:00
+    """
+    c = CUR.get(token)
+    if not c:
+        return
+
+    b = c["bucket"]
+    snap_time = b + timedelta(minutes=PREVIEW_MINUTE)
+    if now_dt < snap_time:
+        return
+
+    s = SPIKE_SNAPSHOT.get(token)
+    if s and s.get("bucket") == b:
+        return  # already snapped for this bucket
+
+    SPIKE_SNAPSHOT[token] = {
+        "bucket": b,
+        "open": c["open"],
+        "high": c["high"],
+        "low": c["low"],
+        "close": c["close"],
+        "vol_5m": c["vol_5m"],
+    }
+
+
+_snapshot_started = False
+def start_snapshot_timer_once():
+    global _snapshot_started
+    if _snapshot_started:
+        return
+    _snapshot_started = True
+
+    def _run():
+        while True:
+            now_dt = datetime.now()
+            with LOCK:
+                for tok in list(CUR.keys()):
+                    _take_snapshot_if_due(tok, now_dt)
+            time.sleep(1)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def update_from_tick(tick: dict):
-    """Update DAY_OPEN/DAY_VOL + build 1m candles for Spike."""
+    """Update DAY_OPEN/DAY_VOL + build 5m candles for Spike."""
     token = tick["instrument_token"]
     ensure(token)
 
@@ -140,7 +189,7 @@ def update_from_tick(tick: dict):
     DAY_OPEN[token] = ohlc.get("open") or DAY_OPEN.get(token)
     DAY_VOL[token] = cumvol
 
-    bucket = floor_1m(ts)
+    bucket = floor_5m(ts)
 
     last_c = LAST_CUMVOL.get(token)
     LAST_CUMVOL[token] = cumvol
@@ -154,21 +203,22 @@ def update_from_tick(tick: dict):
     if token not in CUR:
         CUR[token] = {
             "bucket": bucket, "open": ltp, "high": ltp, "low": ltp,
-            "close": ltp, "vol_1m": vol_delta
+            "close": ltp, "vol_5m": vol_delta
         }
         return
 
     c = CUR[token]
     if bucket != c["bucket"]:
-        # finalize previous 1m candle
+        # finalize previous 5m candle
         BARS[token].append({
             "bucket": c["bucket"], "open": c["open"], "high": c["high"], "low": c["low"],
-            "close": c["close"], "vol_1m": c["vol_1m"]
+            "close": c["close"], "vol_5m": c["vol_5m"]
         })
-        # start new 1m candle
+
+        # start new 5m candle
         CUR[token] = {
             "bucket": bucket, "open": ltp, "high": ltp, "low": ltp,
-            "close": ltp, "vol_1m": vol_delta
+            "close": ltp, "vol_5m": vol_delta
         }
         return
 
@@ -180,7 +230,7 @@ def update_from_tick(tick: dict):
     c["high"] = max(c["high"], ltp)
     c["low"] = min(c["low"], ltp)
     c["close"] = ltp
-    c["vol_1m"] += vol_delta
+    c["vol_5m"] += vol_delta
 
 
 def true_range(h, l, prev_c):
@@ -191,9 +241,9 @@ def true_range(h, l, prev_c):
 
 def compute_spike_for_token(token, atr_n=14, rvol_n=20, use_close_quality=True, use_completed_bar=True):
     """
-    Stable spike: use_completed_bar=True -> spike is based on last completed 1m candle (updates every 1 min).
-    atr_n=14 means 14 minutes ATR (since we are on 1m candles).
-    rvol_n=20 means 20 minutes volume baseline.
+    Base spike:
+      - use_completed_bar=True -> last completed 5m candle (updates every 5 mins)
+      - use_completed_bar=False -> current forming 5m candle
     """
     ensure(token)
     bars = list(BARS[token])
@@ -223,11 +273,80 @@ def compute_spike_for_token(token, atr_n=14, rvol_n=20, use_close_quality=True, 
         return None
 
     # RVOL baseline
-    vols = [b["vol_1m"] for b in hist[-rvol_n:]]
+    vols = [b["vol_5m"] for b in hist[-rvol_n:]]
     avg_vol = (sum(vols) / len(vols)) if vols else None
     if not avg_vol or avg_vol == 0:
         return None
-    rvol = cur["vol_1m"] / avg_vol
+    rvol = cur["vol_5m"] / avg_vol
+
+    rng = cur["high"] - cur["low"]
+    range_by_atr = rng / atr
+
+    sign = 1 if cur["close"] >= cur["open"] else -1
+
+    cq = 1.0
+    if use_close_quality and rng > 0:
+        cq_raw = ((cur["close"] - cur["low"]) / rng) if sign > 0 else ((cur["high"] - cur["close"]) / rng)
+        cq_raw = max(0.0, min(1.0, cq_raw))
+        cq = 0.5 + 0.5 * cq_raw
+
+    spike = sign * (rvol * range_by_atr) * cq
+    return {
+        "atr": atr,
+        "rvol": rvol,
+        "range": rng,
+        "range_by_atr": range_by_atr,
+        "spike": spike,
+        "spike_abs": abs(spike),
+    }
+
+
+def compute_spike_for_token_ui(token, atr_n=14, rvol_n=20, use_close_quality=True):
+    """
+    UI Spike logic (your request):
+      - For the CURRENT 5m candle: freeze a snapshot at minute-4 (1 minute before close).
+        Use that snapshot for spike so UI updates at 9:19, 9:24, ...
+      - Otherwise show last completed 5m candle spike (stable).
+    """
+    ensure(token)
+    bars = list(BARS[token])
+    if not bars:
+        return None
+
+    cur_bucket = CUR.get(token, {}).get("bucket")
+    snap = SPIKE_SNAPSHOT.get(token)
+    use_snap = bool(cur_bucket and snap and snap.get("bucket") == cur_bucket)
+
+    if use_snap:
+        # history = all completed bars, cur = frozen snapshot (partial candle at min-4)
+        if len(bars) < max(atr_n + 1, rvol_n):
+            return None
+        hist = bars
+        cur = snap
+    else:
+        # history excludes last bar, cur = last completed bar
+        if len(bars) < max(atr_n + 2, rvol_n + 1):
+            return None
+        hist = bars[:-1]
+        cur = bars[-1]
+
+    # ATR
+    last_completed = hist[-(atr_n + 1):]
+    trs = []
+    prev_close = None
+    for b in last_completed:
+        trs.append(true_range(b["high"], b["low"], prev_close))
+        prev_close = b["close"]
+    atr = sum(trs[-atr_n:]) / atr_n if atr_n else None
+    if not atr or atr == 0:
+        return None
+
+    # RVOL baseline
+    vols = [b["vol_5m"] for b in hist[-rvol_n:]]
+    avg_vol = (sum(vols) / len(vols)) if vols else None
+    if not avg_vol or avg_vol == 0:
+        return None
+    rvol = cur["vol_5m"] / avg_vol
 
     rng = cur["high"] - cur["low"]
     range_by_atr = rng / atr
@@ -262,6 +381,9 @@ def pct_from_open(token: int):
 
 
 def compute_sector_change_pct_median():
+    """
+    Sector score = MEDIAN of stock % change from market open.
+    """
     out = {}
     for sector, syms in SECTOR_DEFINITIONS.items():
         vals = []
@@ -272,11 +394,13 @@ def compute_sector_change_pct_median():
             p = pct_from_open(tok)
             if p is not None:
                 vals.append(p)
+
         out[sector] = float(pd.Series(vals).median()) if vals else 0.0
     return out
 
 
 def sector_rows_sorted_by_change_pct(sector: str):
+    """Sector stocks grid sorted by % change from market open (descending)."""
     rows = []
     for s in SECTOR_DEFINITIONS.get(sector, []):
         tok = symbol_to_token.get(s)
@@ -292,7 +416,7 @@ def sector_rows_sorted_by_change_pct(sector: str):
         chg = (ltp - op) if op else None
         chg_pct = pct_from_open(tok)
 
-        sp = compute_spike_for_token(tok, use_completed_bar=True)
+        sp = compute_spike_for_token_ui(tok)  # <-- UI spike (minute-4 snapshot or last completed)
 
         rows.append({
             "Symbol": s,
@@ -313,6 +437,11 @@ def sector_rows_sorted_by_change_pct(sector: str):
 
 
 def top_bottom_spike_rows(n=10):
+    """
+    Across ALL symbols:
+    - Top N by UI Spike (5m snapshot at minute-4, else last completed)
+    - Bottom N by UI Spike
+    """
     rows = []
     for sym in ALL_SYMBOLS:
         tok = symbol_to_token.get(sym)
@@ -322,7 +451,7 @@ def top_bottom_spike_rows(n=10):
         if not cur:
             continue
 
-        sp = compute_spike_for_token(tok, use_completed_bar=True)
+        sp = compute_spike_for_token_ui(tok)
         if not sp or sp.get("spike") is None:
             continue
 
@@ -342,12 +471,8 @@ def top_bottom_spike_rows(n=10):
     return topn, botn
 
 
-# ------------------- HISTORY SEEDING (minute candles) -------------------
-def seed_history_once(days_back: int = 2, interval: str = "minute", per_req_sleep: float = 0.35):
-    """
-    NOTE: For 1-minute candles, 7 days is huge and likely to hit rate limits.
-    2 days is usually enough for atr_n/rvol_n.
-    """
+# ------------------- HISTORY SEEDING (so Spike works quickly) -------------------
+def seed_history_once(days_back: int = 7, interval: str = "5minute", per_req_sleep: float = 0.35):
     global _seed_started, SEED_DONE, SEED_ERRORS
 
     if _seed_started:
@@ -369,7 +494,7 @@ def seed_history_once(days_back: int = 2, interval: str = "minute", per_req_slee
                     instrument_token=tok,
                     from_date=from_dt,
                     to_date=to_dt,
-                    interval=interval,  # "minute"
+                    interval=interval,
                     continuous=False,
                     oi=False,
                 )
@@ -381,29 +506,27 @@ def seed_history_once(days_back: int = 2, interval: str = "minute", per_req_slee
                 ensure(tok)
                 BARS[tok].clear()
 
-                # keep last maxlen bars
-                keep_n = BARS[tok].maxlen or 600
-                for c in candles[-keep_n:]:
+                for c in candles[-300:]:
                     dt = c["date"]
                     BARS[tok].append({
-                        "bucket": floor_1m(dt),
+                        "bucket": floor_5m(dt),
                         "open": c["open"],
                         "high": c["high"],
                         "low": c["low"],
                         "close": c["close"],
-                        "vol_1m": c.get("volume", 0) or 0,
+                        "vol_5m": c.get("volume", 0) or 0,
                     })
 
                 # synthetic CUR so Price shows before first ticks
                 if candles and tok not in CUR:
                     last_close = candles[-1]["close"]
                     CUR[tok] = {
-                        "bucket": floor_1m(datetime.now()),
+                        "bucket": floor_5m(datetime.now()),
                         "open": last_close,
                         "high": last_close,
                         "low": last_close,
                         "close": last_close,
-                        "vol_1m": 0,
+                        "vol_5m": 0,
                         "synthetic": True,
                     }
 
@@ -458,8 +581,8 @@ ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
 dash_app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.CYBORG],
-    requests_pathname_prefix=BASE,
-    routes_pathname_prefix="/",
+    requests_pathname_prefix=BASE,   # browser URLs (/dash/...)
+    routes_pathname_prefix="/",      # Flask after mount strips /dash
     assets_folder=ASSETS_DIR,
     suppress_callback_exceptions=True,
 )
@@ -512,7 +635,7 @@ def sectors_page():
                 [
                     dbc.Col(
                         [
-                            html.H6("Top 10 Spike (last completed 1m)", className="mt-1"),
+                            html.H6("Top 10 Spike (5m, snapshot @ min-4)", className="mt-1"),
                             dag.AgGrid(
                                 id="top10-spike-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
@@ -527,7 +650,7 @@ def sectors_page():
                     ),
                     dbc.Col(
                         [
-                            html.H6("Bottom 10 Spike (last completed 1m)", className="mt-1"),
+                            html.H6("Bottom 10 Spike (5m, snapshot @ min-4)", className="mt-1"),
                             dag.AgGrid(
                                 id="bottom10-spike-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
@@ -701,6 +824,7 @@ def render_sector_bars(_):
     items = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     max_abs = max([abs(v) for _, v in items] + [1e-6])
 
+    # reduced histogram size
     base_h = 10
     scale_h = 150
     cap_h = 150
@@ -761,9 +885,9 @@ app = FastAPI(title="Stocker")
 
 @app.on_event("startup")
 def _startup():
-    # 1-minute Spike seeding (recommended)
-    seed_history_once(days_back=2, interval="minute", per_req_sleep=0.35)
+    seed_history_once(days_back=7, interval="5minute", per_req_sleep=0.35)
     start_ticker_once()
+    start_snapshot_timer_once()  # <-- snapshot at minute-4 so UI updates 1 min before close
 
 @app.get("/health")
 def health():
