@@ -545,3 +545,224 @@ a:hover{
   .stock-name{ max-width: 220px; }
   .topbar-wrap{ top: 6px; }
 }
+
+/* =========================
+   PREMIUM HISTOGRAM / CANDLES (SECTOR BARS)
+   Append at the END to override.
+   ========================= */
+
+/* Wrap: more premium spacing + subtle inner grid texture */
+.sector-bars-wrap{
+  gap: 16px;
+  padding: 18px 14px;
+  background:
+    radial-gradient(900px 220px at 30% 0%, rgba(59,130,246,0.10), transparent 60%),
+    radial-gradient(900px 220px at 80% 0%, rgba(168,85,247,0.10), transparent 60%),
+    rgba(0,0,0,0.20);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: var(--shadow-md), var(--inner);
+  position: relative;
+}
+
+/* subtle grid lines inside the wrap (very light) */
+.sector-bars-wrap:after{
+  content:"";
+  position:absolute;
+  inset: 10px 12px;
+  pointer-events:none;
+  opacity: 0.14;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255,255,255,0.06) 0px,
+      rgba(255,255,255,0.06) 1px,
+      transparent 1px,
+      transparent 56px
+    );
+  border-radius: var(--r-lg);
+  mix-blend-mode: overlay;
+}
+
+/* Card: more premium, cleaner, gradient ring */
+.sector-bar-card{
+  width: 96px;
+  padding: 12px 10px 12px;
+  border-radius: 18px;
+  background: rgba(255,255,255,0.035);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Ring glow */
+.sector-bar-card:before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  border-radius: 20px;
+  padding: 2px;
+  background: linear-gradient(
+    135deg,
+    rgba(59,130,246,0.35),
+    rgba(34,211,238,0.18),
+    rgba(168,85,247,0.28),
+    rgba(236,72,153,0.14)
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events:none;
+  opacity: .55;
+}
+
+/* soft spotlight inside each card */
+.sector-bar-card:after{
+  content:"";
+  position:absolute;
+  inset:-60% -60% auto -60%;
+  height: 140%;
+  background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.08), transparent 55%);
+  opacity: 0.8;
+  pointer-events:none;
+}
+
+/* Hover: premium lift */
+.sector-bar-card:hover{
+  transform: translateY(-8px);
+  border-color: rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.05);
+  box-shadow: 0 26px 80px rgba(0,0,0,0.68);
+}
+
+/* Value label: make it a pill (looks like a price badge) */
+.bar-value{
+  font-weight: 950;
+  margin-bottom: 10px;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+
+  padding: 6px 10px;
+  border-radius: 999px;
+
+  background: rgba(0,0,0,0.22);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+
+  color: rgba(255,255,255,0.92);
+}
+
+/* Bar container: looks like a candle channel */
+.glow-bar{
+  width: 64px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.20);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Add subtle “ticks” (candlestick feel) */
+.glow-bar:before{
+  content:"";
+  position:absolute;
+  inset: 6px 8px;
+  opacity: 0.16;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255,255,255,0.12) 0px,
+      rgba(255,255,255,0.12) 1px,
+      transparent 1px,
+      transparent 9px
+    );
+  border-radius: 12px;
+  pointer-events:none;
+}
+
+/* Sheen */
+.glow-bar:after{
+  opacity: 0.45; /* a bit calmer */
+}
+
+/* Stronger, more premium gradients for up/down */
+.bar-green{
+  background: linear-gradient(
+    180deg,
+    rgba(51,255,139,1) 0%,
+    rgba(33,200,120,0.95) 40%,
+    rgba(10,90,48,0.92) 100%
+  );
+  box-shadow:
+    0 0 36px rgba(51,255,139,0.20),
+    inset 0 0 16px rgba(255,255,255,0.10);
+}
+.bar-red{
+  background: linear-gradient(
+    180deg,
+    rgba(255,81,102,1) 0%,
+    rgba(220,55,80,0.95) 40%,
+    rgba(90,12,22,0.92) 100%
+  );
+  box-shadow:
+    0 0 36px rgba(255,81,102,0.18),
+    inset 0 0 16px rgba(255,255,255,0.08);
+}
+
+/* Sector label: more “premium” typography */
+.bar-name{
+  margin-top: 10px;
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(255,255,255,0.70);
+  text-align:center;
+  letter-spacing: 0.75px;
+  text-transform: uppercase;
+}
+
+/* =========================
+   THIN + TALL CANDLES (OVERRIDE)
+   Put at END of CSS
+   ========================= */
+
+/* Make each sector card a bit slimmer */
+.sector-bar-card{
+  width: 95px;              /* was ~92-96 */
+  padding: 12px 8px 12px;   /* tighter */
+}
+
+/* Make the candle/bar thinner */
+.glow-bar{
+  width: 60px;              /* thinner candle body */
+  border-radius: 12px;
+}
+
+/* Slightly narrower value pill so it fits */
+.bar-value{
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+/* Keep label compact */
+.bar-name{
+  font-size: 12px;
+  letter-spacing: 0.8px;
+}
+
+/* Ensure bars can look taller (cap height controlled in Python),
+   but add visual “height stretch” feel by reducing padding in wrap */
+.sector-bars-wrap{
+  padding-top: 14px;
+  padding-bottom: 12px;
+  align-items: flex-end;
+}
+
+/* Optional: less spacing so more thin candles fit */
+.sector-bars-wrap{
+  gap: 12px;
+}
