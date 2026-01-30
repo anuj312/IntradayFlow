@@ -318,6 +318,8 @@ def top_bottom_spike_rows(n=10):
     Across ALL symbols:
     - Top N by Spike (last completed 5m)
     - Bottom N by Spike (last completed 5m)
+
+    ✅ Output only: Symbol, Change%, Spike
     """
     rows = []
     for sym in ALL_SYMBOLS:
@@ -334,7 +336,6 @@ def top_bottom_spike_rows(n=10):
 
         rows.append({
             "Symbol": sym,
-            "Price": _r(cur["close"], 2),
             "Change%": _r(pct_from_open(tok), 2),
             "Spike": _r(sp["spike"], 2),
         })
@@ -487,9 +488,9 @@ def top_nav(pathname: str):
 
 
 def sectors_page():
+    # ✅ ONLY Symbol + Change% + Spike in Top/Bottom tables
     common_cols = [
         {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "StockCell", "minWidth": 170},
-        {"field": "Price", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}},
         {"field": "Change%", "type": "rightAligned",
          "valueFormatter": {"function": "fmtPct(params.value)"},
          "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
@@ -576,7 +577,6 @@ def sector_page(sector):
                      "valueFormatter": {"function": "fmtSigned2(params.value)"},
                      "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
 
-                    # default sort: % change from market open
                     {"field": "Change%", "type": "rightAligned",
                      "valueFormatter": {"function": "fmtPct(params.value)"},
                      "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
@@ -702,7 +702,6 @@ def render_sector_bars(_):
     items = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     max_abs = max([abs(v) for _, v in items] + [1e-6])
 
-    # reduced histogram size
     base_h = 10
     scale_h = 150
     cap_h = 150
