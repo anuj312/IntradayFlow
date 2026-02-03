@@ -1,12 +1,21 @@
-import os, time, threading
+import os
+import time
+import json
+import base64
+import threading
 from collections import deque
-from datetime import datetime, timedelta
-from urllib.parse import unquote
+from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote, quote
+from typing import Optional, Dict, Any
+from http.cookies import SimpleCookie
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
-from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse, FileResponse
 from starlette.middleware.wsgi import WSGIMiddleware
+from starlette.datastructures import Headers
 
 import dash
 from dash import dcc, html, Input, Output
@@ -15,9 +24,192 @@ import dash_ag_grid as dag
 
 from kiteconnect import KiteConnect, KiteTicker
 
+import firebase_admin
+from firebase_admin import credentials, auth as fb_auth, firestore
+
 
 # ------------------- MOUNT PATH -------------------
 BASE = "/dash/"  # Browser URL: http://host:port/dash/
+
+
+# ------------------- FIREBASE (Web config used on /login) -------------------
+FIREBASE_WEB_CONFIG = {
+    "apiKey": "AIzaSyCR0H-Rr3CVGzfxvNkOdnnLOQOJy73ctIU",
+    "authDomain": "tradecorner-75138.firebaseapp.com",
+    "projectId": "tradecorner-75138",
+    "appId": "1:396741310115:web:98b3e5dba7a230857ab116",
+}
+
+SESSION_COOKIE_NAME = "session"
+SESSION_EXPIRES_DAYS = int(os.getenv("SESSION_EXPIRES_DAYS", "7"))
+
+# On Render (HTTPS) set COOKIE_SECURE=true. On localhost keep false.
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes")
+
+
+# ------------------- FIREBASE ADMIN INIT -------------------
+def init_firebase_admin():
+    if firebase_admin._apps:
+        return
+
+    b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64", "").strip()
+    path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "service.json").strip()
+    raw = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+
+    if b64:
+        data = base64.b64decode(b64).decode("utf-8")
+        info = json.loads(data)
+        cred = credentials.Certificate(info)
+    elif raw:
+        info = json.loads(raw)
+        cred = credentials.Certificate(info)
+    elif path:
+        cred = credentials.Certificate(path)
+    else:
+        raise RuntimeError(
+            "Missing Firebase admin credentials. Set FIREBASE_SERVICE_ACCOUNT_B64 (recommended) "
+            "or FIREBASE_SERVICE_ACCOUNT_PATH or FIREBASE_SERVICE_ACCOUNT_JSON."
+        )
+
+    firebase_admin.initialize_app(cred)
+
+
+init_firebase_admin()
+db = firestore.client()
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def verify_session_cookie_from_headers(headers: Headers) -> Optional[dict]:
+    cookie_hdr = headers.get("cookie", "") or ""
+    c = SimpleCookie()
+    c.load(cookie_hdr)
+    morsel = c.get(SESSION_COOKIE_NAME)
+    if not morsel:
+        return None
+    try:
+        return fb_auth.verify_session_cookie(morsel.value, check_revoked=True)
+    except Exception:
+        return None
+
+
+def user_display_name(decoded: Optional[dict]) -> str:
+    if not decoded:
+        return "User"
+    nm = (decoded.get("name") or "").strip()
+    if nm:
+        return nm
+    em = (decoded.get("email") or "").strip()
+    if em and "@" in em:
+        return em.split("@", 1)[0]
+    return "User"
+
+
+def get_uid(decoded: Optional[dict]) -> Optional[str]:
+    return decoded.get("uid") if decoded else None
+
+
+# ------------------- SUBSCRIPTIONS (Firestore) -------------------
+PLAN_6M_PRICE = 4999
+PLAN_LIFE_PRICE = 9999
+PLAN_6M_DAYS = int(os.getenv("PLAN_6M_DAYS", "183"))  # ~6 months
+
+
+def get_subscription(uid: str) -> Dict[str, Any]:
+    """
+    Firestore doc: subscriptions/{uid}
+    """
+    doc = db.collection("subscriptions").document(uid).get()
+    if not doc.exists:
+        return {"subscribed": False, "plan": None, "expires_at": None}
+
+    data = doc.to_dict() or {}
+    if data.get("status") != "active":
+        return {"subscribed": False, "plan": data.get("plan"), "expires_at": data.get("expires_at")}
+
+    plan = data.get("plan")
+    expires_at = data.get("expires_at")  # Firestore timestamp -> datetime
+
+    if not expires_at:
+        # lifetime
+        return {"subscribed": True, "plan": plan, "expires_at": None}
+
+    try:
+        exp = expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        return {"subscribed": exp > utcnow(), "plan": plan, "expires_at": exp}
+    except Exception:
+        return {"subscribed": False, "plan": plan, "expires_at": None}
+
+
+def activate_subscription(uid: str, plan: str, decoded_user: Optional[dict] = None):
+    """
+    Writes/updates:
+      subscriptions/{uid}
+
+    Stores user_name and user_email so Firebase console shows who purchased.
+    """
+    if not uid:
+        raise ValueError("uid is required")
+
+    plan = (plan or "").strip().lower()
+    if plan not in ("6m", "lifetime"):
+        raise ValueError("plan must be '6m' or 'lifetime'")
+
+    if plan == "6m":
+        expires_at = utcnow() + timedelta(days=PLAN_6M_DAYS)
+        price = PLAN_6M_PRICE
+    else:
+        expires_at = None
+        price = PLAN_LIFE_PRICE
+
+    user_name = None
+    user_email = None
+    if decoded_user:
+        user_name = (decoded_user.get("name") or "").strip() or None
+        user_email = (decoded_user.get("email") or "").strip() or None
+
+    ref = db.collection("subscriptions").document(uid)
+    exists = ref.get().exists
+
+    payload = {
+        "status": "active",
+        "plan": plan,
+        "price_inr": price,
+        "expires_at": expires_at,  # None for lifetime
+        "user_name": user_name,
+        "user_email": user_email,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    if not exists:
+        payload["created_at"] = firestore.SERVER_TIMESTAMP
+
+    ref.set(payload, merge=True)
+
+
+# ------------------- AUTH GATE (login required) -------------------
+class AuthGate:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        headers = Headers(scope=scope)
+        path = scope.get("path", "/")
+        user = verify_session_cookie_from_headers(headers)
+
+        if not user:
+            nxt = quote(path)
+            resp = RedirectResponse(url=f"/login?next={nxt}", status_code=307)
+            resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
+            return await resp(scope, receive, send)
+
+        return await self.app(scope, receive, send)
 
 
 # ------------------- KITE CONFIG -------------------
@@ -32,16 +224,31 @@ SECTOR_DEFINITIONS = {
     "METAL": ["ADANIENT","HINDALCO","JSWSTEEL","HINDZINC","APLAPOLLO","TATASTEEL","JINDALSTEL","VEDL","SAIL","NATIONALUM","NMDC"],
     "PSUS": ["BANKINDIA","PNB","INDIANB","SBIN","UNIONBANK","BANKBARODA","CANBK"],
     "REALTY": ["PHOENIXLTD","GODREJPROP","LODHA","OBEROIRLTY","DLF","PRESTIGE","NBCC","NCC"],
-    "ENERGY": ["CGPOWER","RELIANCE","GMRAIRPORT","JSWENERGY","ONGC","POWERGRID","BLUESTARCO","COALINDIA","SUZLON","IREDA","IOC","IGL","TATAPOWER","INOXWIND","MAZDOCK","PETRONET","SOLARINDS","ADANIGREEN","NTPC","OIL","BDL","BPCL","NHPC","POWERINDIA","ADANIENSOL","TORRENTPOWER"],
-    "AUTO": ["BOSCHLTD","TIINDIA","HEROMOTOCO","M&M","EICHERMOT","EXIDEIND","BAJAJ-AUTO","ASHOKLEY","MARUTI","TITAGARH","TVSMOTOR","MOTHERSON","SONACOMS","UNOMINDA","TATAMOTORS","BHARATFORG"],
-    "IT": ["KAYNES","TATATECH","LTIM","CYIENT","MPHASIS","TCS","CAMS","OFSS","HFCL","TECHM","TATAELXSI","HCLTECH","WIPRO","KPITTECH","COFORGE","PERSISTENT","INFY"],
-    "PHARMA": ["CIPLA","ALKEM","BIOCON","DRREDDY","MANKIND","TORNTPHARM","ZYDUSLIFE","DIVISLAB","LUPIN","PPLPHARMA","LAURUSLABS","FORTIS","AUROPHARMA","GLENMARK","SUNPHARMA"],
-    "FMCG": ["ETERNAL","MARICO","NYKAA","NESTLEIND","VBL","COLPAL","HINDUNILVR","PATANJALI","DMART","DABUR","GODREJCP","BRITANNIA","UNITDSPR","ITC","TATACONSUM","KALYANKJIL","SUPREMEIND"],
+    "ENERGY": ["CGPOWER","RELIANCE","GMRAIRPORT","JSWENERGY","ONGC","POWERGRID","BLUESTARCO","COALINDIA","SUZLON","IREDA",
+               "IOC","IGL","TATAPOWER","INOXWIND","MAZDOCK","PETRONET","SOLARINDS","ADANIGREEN","NTPC","OIL","BDL","BPCL",
+               "NHPC","POWERINDIA","ADANIENSOL","TORRENTPOWER"],
+    "AUTO": ["BOSCHLTD","TIINDIA","HEROMOTOCO","M&M","EICHERMOT","EXIDEIND","BAJAJ-AUTO","ASHOKLEY","MARUTI","TITAGARH",
+             "TVSMOTOR","MOTHERSON","SONACOMS","UNOMINDA","TATAMOTORS","BHARATFORG"],
+    "IT": ["KAYNES","TATATECH","LTIM","CYIENT","MPHASIS","TCS","CAMS","OFSS","HFCL","TECHM","TATAELXSI","HCLTECH","WIPRO",
+           "KPITTECH","COFORGE","PERSISTENT","INFY"],
+    "PHARMA": ["CIPLA","ALKEM","BIOCON","DRREDDY","MANKIND","TORNTPHARM","ZYDUSLIFE","DIVISLAB","LUPIN","PPLPHARMA",
+               "LAURUSLABS","FORTIS","AUROPHARMA","GLENMARK","SUNPHARMA"],
+    "FMCG": ["ETERNAL","MARICO","NYKAA","NESTLEIND","VBL","COLPAL","HINDUNILVR","PATANJALI","DMART","DABUR","GODREJCP",
+             "BRITANNIA","UNITDSPR","ITC","TATACONSUM","KALYANKJIL","SUPREMEIND"],
     "CEMENT": ["SHREECEM","DALBHARAT","AMBUJACEM","ULTRACEMCO"],
-    "FINSERVICE": ["PNBHOUSING","BAJAJFINSV","ICICIPRULI","NUVAMA","HDFCLIFE","SAMMAANCAP","ANGELONE","RECLTD","BAJFINANCE","BSE","MAXHEALTH","ICICIGI","HUDCO","CHOLAFIN","PFC","HDFCAMC","MUTHOOTFIN","PAYTM","JIOFIN","SHRIRAMFIN","SBICARD","POLICYBZR","SBILIFE","LICHSGFIN","LICI","MANAPPURAM","IRFC","IIFL","CDSL"],
-    "BANK": ["IDFCFIRSTB","FEDERALBNK","INDUSINDBK","HDFCBANK","SBIN","KOTAKBANK","AUBANK","CANBK","BANDHANBNK","RBLBANK","ICICIBANK","AXISBANK"],
-    "NIFTY_50": ["ADANIENT","ADANIPORTS","APOLLOHOSP","ASIANPAINT","AXISBANK","BAJAJ-AUTO","BAJFINANCE","BAJAJFINSV","BEL","BHARTIARTL","CIPLA","COALINDIA","DRREDDY","EICHERMOT","GRASIM","HCLTECH","HDFCBANK","HDFCLIFE","HINDALCO","HINDUNILVR","ICICIBANK","INFY","INDIGO","ITC","JIOFIN","JSWSTEEL","KOTAKBANK","LT","M&M","MARUTI","MAXHEALTH","NESTLEIND","NTPC","ONGC","POWERGRID","RELIANCE","SBILIFE","SHRIRAMFIN","SBIN","SUNPHARMA","TCS","TATACONSUM","TATASTEEL","TECHM","TITAN","TRENT","ULTRACEMCO","WIPRO","TATAMOTORS","ETERNAL"],
-    "MIDCAP": ["RVNL","MPHASIS","HINDPETRO","PAGEIND","POLYCAB","LUPIN","IDFCFIRSTB","CONCOR","CUMMINSIND","VOLTAS","BHARATFORG","FEDERALBNK","INDHOTEL","COFORGE","ASHOKLEY","PERSISTENT","UPL","GODREJPROP","AUROPHARMA","AUBANK","ASTRAL","HDFCAMC","JUBLFOOD","PIIND"],
+    "FINSERVICE": ["PNBHOUSING","BAJAJFINSV","ICICIPRULI","NUVAMA","HDFCLIFE","SAMMAANCAP","ANGELONE","RECLTD","BAJFINANCE",
+                   "BSE","MAXHEALTH","ICICIGI","HUDCO","CHOLAFIN","PFC","HDFCAMC","MUTHOOTFIN","PAYTM","JIOFIN","SHRIRAMFIN",
+                   "SBICARD","POLICYBZR","SBILIFE","LICHSGFIN","LICI","MANAPPURAM","IRFC","IIFL","CDSL"],
+    "BANK": ["IDFCFIRSTB","FEDERALBNK","INDUSINDBK","HDFCBANK","SBIN","KOTAKBANK","AUBANK","CANBK","BANDHANBNK","RBLBANK",
+             "ICICIBANK","AXISBANK"],
+    "NIFTY_50": ["ADANIENT","ADANIPORTS","APOLLOHOSP","ASIANPAINT","AXISBANK","BAJAJ-AUTO","BAJFINANCE","BAJAJFINSV","BEL",
+                "BHARTIARTL","CIPLA","COALINDIA","DRREDDY","EICHERMOT","GRASIM","HCLTECH","HDFCBANK","HDFCLIFE","HINDALCO",
+                "HINDUNILVR","ICICIBANK","INFY","INDIGO","ITC","JIOFIN","JSWSTEEL","KOTAKBANK","LT","M&M","MARUTI","MAXHEALTH",
+                "NESTLEIND","NTPC","ONGC","POWERGRID","RELIANCE","SBILIFE","SHRIRAMFIN","SBIN","SUNPHARMA","TCS","TATACONSUM",
+                "TATASTEEL","TECHM","TITAN","TRENT","ULTRACEMCO","WIPRO","TATAMOTORS","ETERNAL"],
+    "MIDCAP": ["RVNL","MPHASIS","HINDPETRO","PAGEIND","POLYCAB","LUPIN","IDFCFIRSTB","CONCOR","CUMMINSIND","VOLTAS",
+               "BHARATFORG","FEDERALBNK","INDHOTEL","COFORGE","ASHOKLEY","PERSISTENT","UPL","GODREJPROP","AUROPHARMA","AUBANK",
+               "ASTRAL","HDFCAMC","JUBLFOOD","PIIND"],
 }
 ALL_SYMBOLS = sorted(set(sum(SECTOR_DEFINITIONS.values(), [])))
 
@@ -54,55 +261,33 @@ ins = pd.DataFrame(kite.instruments("NSE"))
 ins = ins[ins["tradingsymbol"].isin(ALL_SYMBOLS)].copy()
 
 symbol_to_token = dict(zip(ins["tradingsymbol"], ins["instrument_token"]))
-symbol_to_name = dict(zip(ins["tradingsymbol"], ins["name"]))
+symbol_to_name = dict(zip(ins["tradingsymbol"], ins.get("name", "")))
 TOKENS = sorted(symbol_to_token.values())
 
 
-# ------------------- LIVE STATE -------------------
+# ------------------- LIVE STATE (ticks) -------------------
 LOCK = threading.Lock()
+LAST_PRICE: Dict[int, float] = {}
+DAY_VOL: Dict[int, float] = {}
+LAST_OHLC: Dict[int, dict] = {}
 
-CUR = {}          # token -> current 5m candle
-BARS = {}         # token -> deque of completed 5m candles
-LAST_CUMVOL = {}  # token -> last seen cumulative day volume
-
-DAY_OPEN = {}     # token -> day open (market open) from tick.ohlc.open
-DAY_VOL = {}      # token -> day cumulative volume
-
-# tick stats
 LAST_TICK_TS = 0.0
 LAST_TICK_DT = None
 TOTAL_TICKS = 0
-
 TPS_WINDOW_SEC = 1.0
-TPS_BUCKETS = deque()  # (time.time(), count)
+TPS_BUCKETS = deque()
 
-# history seeding status
-_seed_started = False
-SEED_DONE = False
-SEED_PROGRESS = {"done": 0, "total": len(TOKENS)}
-SEED_ERRORS = 0
-
-
-def _r(x, n=2):
-    try:
-        return round(float(x), n) if x is not None else None
-    except Exception:
-        return None
+# ------------------- DAILY STATS (RFactor baselines) -------------------
+LOOKBACK_SESSIONS = 20
+DAILY_STATS: Dict[int, Dict[str, Optional[float]]] = {}
+DAILY_SEED_STARTED = False
+DAILY_SEED_DONE = False
+DAILY_SEED_PROGRESS = {"done": 0, "total": len(TOKENS)}
+DAILY_SEED_ERRORS = 0
 
 
-def floor_5m(dt: datetime):
-    return dt.replace(second=0, microsecond=0, minute=dt.minute - (dt.minute % 5))
-
-
-def ensure(token):
-    if token not in BARS:
-        BARS[token] = deque(maxlen=300)
-
-
-def _record_tick_batch(count: int, last_dt: datetime | None):
-    """Call only under LOCK."""
+def _record_tick_batch(count: int, last_dt: Optional[datetime]):
     global LAST_TICK_TS, LAST_TICK_DT, TOTAL_TICKS
-
     now = time.time()
     TOTAL_TICKS += int(count)
 
@@ -116,151 +301,154 @@ def _record_tick_batch(count: int, last_dt: datetime | None):
 
 
 def _get_tps():
-    """Call only under LOCK."""
     if not TPS_BUCKETS:
         return 0.0
     return sum(c for _, c in TPS_BUCKETS) / TPS_WINDOW_SEC
 
 
 def update_from_tick(tick: dict):
-    """Update DAY_OPEN/DAY_VOL + build 5m candles for Spike."""
     token = tick["instrument_token"]
-    ensure(token)
-
-    ts = tick.get("exchange_timestamp") or datetime.now()
     ltp = tick.get("last_price")
-    cumvol = tick.get("volume_traded")  # day cumulative
+    cumvol = tick.get("volume_traded")
     ohlc = tick.get("ohlc") or {}
+    ts = tick.get("exchange_timestamp") or datetime.now()
 
-    if ltp is None or cumvol is None:
-        return
-
-    # baseline from market open (does not reset intraday)
-    DAY_OPEN[token] = ohlc.get("open") or DAY_OPEN.get(token)
-    DAY_VOL[token] = cumvol
-
-    bucket = floor_5m(ts)
-
-    last_c = LAST_CUMVOL.get(token)
-    LAST_CUMVOL[token] = cumvol
-
-    # handle new-day reset of cumulative volume
-    if last_c is not None and cumvol < last_c:
-        vol_delta = cumvol
-    else:
-        vol_delta = max(0, (cumvol - last_c)) if last_c is not None else 0
-
-    if token not in CUR:
-        CUR[token] = {
-            "bucket": bucket, "open": ltp, "high": ltp, "low": ltp,
-            "close": ltp, "vol_5m": vol_delta
-        }
-        return
-
-    c = CUR[token]
-    if bucket != c["bucket"]:
-        BARS[token].append({
-            "bucket": c["bucket"], "open": c["open"], "high": c["high"], "low": c["low"],
-            "close": c["close"], "vol_5m": c["vol_5m"]
-        })
-        CUR[token] = {
-            "bucket": bucket, "open": ltp, "high": ltp, "low": ltp,
-            "close": ltp, "vol_5m": vol_delta
-        }
-        return
-
-    # same bucket
-    if c.get("synthetic"):
-        c["open"] = ltp
-        c["synthetic"] = False
-
-    c["high"] = max(c["high"], ltp)
-    c["low"] = min(c["low"], ltp)
-    c["close"] = ltp
-    c["vol_5m"] += vol_delta
-
-
-def true_range(h, l, prev_c):
-    if prev_c is None:
-        return h - l
-    return max(h - l, abs(h - prev_c), abs(l - prev_c))
-
-
-def compute_spike_for_token(token, atr_n=14, rvol_n=20, use_close_quality=True, use_completed_bar=True):
-    """
-    Stable spike: use_completed_bar=True -> spike is based on last completed 5m candle (updates every 5 mins).
-    """
-    ensure(token)
-    bars = list(BARS[token])
-
-    if use_completed_bar:
-        if len(bars) < max(atr_n + 2, rvol_n + 1):
-            return None
-        cur = bars[-1]
-        hist = bars[:-1]
-    else:
-        cur = CUR.get(token)
-        if cur is None:
-            return None
-        if len(bars) < max(atr_n + 1, rvol_n):
-            return None
-        hist = bars
-
-    # ATR
-    last_completed = hist[-(atr_n + 1):]
-    trs = []
-    prev_close = None
-    for b in last_completed:
-        trs.append(true_range(b["high"], b["low"], prev_close))
-        prev_close = b["close"]
-    atr = sum(trs[-atr_n:]) / atr_n if atr_n else None
-    if not atr or atr == 0:
+    if ltp is None:
         return None
 
-    # RVOL baseline
-    vols = [b["vol_5m"] for b in hist[-rvol_n:]]
-    avg_vol = (sum(vols) / len(vols)) if vols else None
-    if not avg_vol or avg_vol == 0:
-        return None
-    rvol = cur["vol_5m"] / avg_vol
+    LAST_PRICE[token] = float(ltp)
+    if cumvol is not None:
+        DAY_VOL[token] = float(cumvol)
+    if ohlc:
+        LAST_OHLC[token] = ohlc
 
-    rng = cur["high"] - cur["low"]
-    range_by_atr = rng / atr
+    return ts
 
-    sign = 1 if cur["close"] >= cur["open"] else -1
 
-    cq = 1.0
-    if use_close_quality and rng > 0:
-        cq_raw = ((cur["close"] - cur["low"]) / rng) if sign > 0 else ((cur["high"] - cur["close"]) / rng)
-        cq_raw = max(0.0, min(1.0, cq_raw))
-        cq = 0.5 + 0.5 * cq_raw
+def compute_20d_daily_stats_for_token(token: int, days_back: int = 140):
+    to_dt = datetime.now()
+    from_dt = to_dt - timedelta(days=days_back)
 
-    spike = sign * (rvol * range_by_atr) * cq
+    candles = kite.historical_data(
+        instrument_token=token,
+        from_date=from_dt,
+        to_date=to_dt,
+        interval="day",
+        continuous=False,
+        oi=False,
+    )
+    df = pd.DataFrame(candles)
+    if df.empty or len(df) < LOOKBACK_SESSIONS + 1:
+        return {"avg_vol_20": None, "avg_range_20": None, "avg_abs_ret_20": None}
+
+    df = df.tail(LOOKBACK_SESSIONS + 1).copy()
+    df["range"] = (df["high"] - df["low"]).astype(float)
+    df["prev_close"] = df["close"].shift(1)
+    df["ret_pct"] = (df["close"] - df["prev_close"]) / df["prev_close"] * 100.0
+    df = df.dropna().tail(LOOKBACK_SESSIONS)
+
     return {
-        "atr": atr,
-        "rvol": rvol,
-        "range": rng,
-        "range_by_atr": range_by_atr,
-        "spike": spike,
-        "spike_abs": abs(spike),
+        "avg_vol_20": float(df["volume"].mean()),
+        "avg_range_20": float(df["range"].mean()),
+        "avg_abs_ret_20": float(df["ret_pct"].abs().mean()),
     }
 
 
-# ------------------- % CHANGE FROM MARKET OPEN (NO 5m RESET) -------------------
-def pct_from_open(token: int):
-    cur = CUR.get(token)
-    op = DAY_OPEN.get(token)
-    if not cur or not op:
+def seed_daily_stats_once(per_req_sleep: float = 0.35):
+    global DAILY_SEED_STARTED, DAILY_SEED_DONE, DAILY_SEED_ERRORS
+    if DAILY_SEED_STARTED:
+        return
+    DAILY_SEED_STARTED = True
+
+    def _run():
+        global DAILY_SEED_DONE, DAILY_SEED_ERRORS
+        DAILY_SEED_PROGRESS["total"] = len(TOKENS)
+        DAILY_SEED_PROGRESS["done"] = 0
+
+        for i, tok in enumerate(TOKENS, start=1):
+            try:
+                st = compute_20d_daily_stats_for_token(tok)
+            except Exception:
+                DAILY_SEED_ERRORS += 1
+                st = {"avg_vol_20": None, "avg_range_20": None, "avg_abs_ret_20": None}
+
+            with LOCK:
+                DAILY_STATS[tok] = st
+
+            DAILY_SEED_PROGRESS["done"] = i
+            time.sleep(per_req_sleep)
+
+        DAILY_SEED_DONE = True
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def compute_rfactor_row_for_token(token: int):
+    ltp = LAST_PRICE.get(token)
+    vol_today = DAY_VOL.get(token)
+    ohlc = LAST_OHLC.get(token) or {}
+
+    prev_close = ohlc.get("close")
+    day_high = ohlc.get("high")
+    day_low = ohlc.get("low")
+
+    if ltp is None or vol_today is None or prev_close is None:
         return None
-    ltp = cur["close"]
-    return ((ltp - op) / op) * 100.0
+
+    prev_close = float(prev_close)
+    ltp = float(ltp)
+    vol_today = float(vol_today)
+
+    if prev_close <= 0 or ltp <= 0:
+        return None
+
+    pct_today = ((ltp - prev_close) / prev_close) * 100.0
+    range_today = (float(day_high) - float(day_low)) if (day_high is not None and day_low is not None) else 0.0
+
+    st = DAILY_STATS.get(token) or {}
+    avg_vol_20 = st.get("avg_vol_20")
+    avg_range_20 = st.get("avg_range_20")
+    avg_abs_ret_20 = st.get("avg_abs_ret_20")
+    if not avg_vol_20 or not avg_range_20 or not avg_abs_ret_20:
+        return None
+
+    eps = 1e-9
+    rvol = vol_today / (float(avg_vol_20) + eps)
+    range_factor = max(0.0, range_today) / (float(avg_range_20) + eps)
+    move_factor = abs(pct_today) / (float(avg_abs_ret_20) + eps)
+
+    rfactor = rvol * range_factor * move_factor
+    dirr = (1.0 if pct_today >= 0 else -1.0) * rfactor
+
+    return {"pct": pct_today, "rfactor": rfactor, "dirr": dirr, "ltp": ltp, "prev_close": prev_close}
 
 
-def compute_sector_change_pct_median():
-    """
-    Sector score = MEDIAN of stock % change from market open.
-    Median avoids 1-2 outlier stocks dominating the sector rank.
-    """
+def top_gainers_losers_rfactor_rows(n: int = 15):
+    rows = []
+    for sym in ALL_SYMBOLS:
+        tok = symbol_to_token.get(sym)
+        if not tok:
+            continue
+        rr = compute_rfactor_row_for_token(tok)
+        if not rr:
+            continue
+        rows.append({
+            "Symbol": sym,
+            "Change%": round(float(rr["pct"]), 2),
+            "RFactor": round(float(rr["rfactor"]), 2),
+            "DirR": round(float(rr["dirr"]), 2),
+        })
+
+    if not rows:
+        return [], []
+
+    df = pd.DataFrame(rows).dropna(subset=["Change%", "RFactor"])
+    gainers = df[df["Change%"] > 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
+    losers = df[df["Change%"] < 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
+    return gainers, losers
+
+
+def compute_sector_dirr_mean():
     out = {}
     for sector, syms in SECTOR_DEFINITIONS.items():
         vals = []
@@ -268,155 +456,65 @@ def compute_sector_change_pct_median():
             tok = symbol_to_token.get(s)
             if not tok:
                 continue
-            p = pct_from_open(tok)
-            if p is not None:
-                vals.append(p)
-
-        out[sector] = float(pd.Series(vals).median()) if vals else 0.0
+            rr = compute_rfactor_row_for_token(tok)
+            if rr and rr.get("dirr") is not None:
+                vals.append(float(rr["dirr"]))
+        out[sector] = float(pd.Series(vals).mean()) if vals else 0.0
     return out
 
 
-def sector_rows_sorted_by_change_pct(sector: str):
-    """Sector stocks grid sorted by % change from market open (descending)."""
+def sector_rows_sorted_by_rfactor(sector: str):
     rows = []
     for s in SECTOR_DEFINITIONS.get(sector, []):
         tok = symbol_to_token.get(s)
         if not tok:
             continue
-
-        cur = CUR.get(tok)
-        if not cur:
+        rr = compute_rfactor_row_for_token(tok)
+        if not rr:
             continue
 
-        ltp = cur["close"]
-        op = DAY_OPEN.get(tok)
-        chg = (ltp - op) if op else None
-        chg_pct = pct_from_open(tok)
-
-        sp = compute_spike_for_token(tok, use_completed_bar=True)
+        ltp = rr["ltp"]
+        prev_close = rr["prev_close"]
+        chg = ltp - prev_close
 
         rows.append({
             "Symbol": s,
             "Company": symbol_to_name.get(s, ""),
-            "Price": _r(ltp, 2),
-            "Change": _r(chg, 2),
-            "Change%": _r(chg_pct, 2),
-            "Range/ATR": _r(sp["range_by_atr"], 2) if sp else None,
-            "Spike": _r(sp["spike"], 2) if sp else None,
-            "SpikeAbs": _r(sp["spike_abs"], 2) if sp else None,
+            "Price": round(float(ltp), 2),
+            "Change": round(float(chg), 2),
+            "Change%": round(float(rr["pct"]), 2),
+            "RFactor": round(float(rr["rfactor"]), 2),
+            "DirR": round(float(rr["dirr"]), 2),
         })
 
     df = pd.DataFrame(rows)
     if df.empty:
         return []
-    df = df.sort_values("Change%", ascending=False, na_position="last")
+    df = df.sort_values("RFactor", ascending=False, na_position="last")
     return df.to_dict("records")
 
 
-def top_bottom_spike_rows(n=10):
-    """
-    Across ALL symbols:
-    - Top N by Spike (last completed 5m)
-    - Bottom N by Spike (last completed 5m)
+# ------------------- MARKET STATUS (LIVE/CLOSED) -------------------
+IST = ZoneInfo("Asia/Kolkata")
 
-    ✅ Output only: Symbol, Change%, Spike
-    """
-    rows = []
-    for sym in ALL_SYMBOLS:
-        tok = symbol_to_token.get(sym)
-        if not tok:
-            continue
-        cur = CUR.get(tok)
-        if not cur:
-            continue
+def market_live_closed() -> str:
+    now = datetime.now(IST)
+    if now.weekday() >= 5:
+        return "CLOSED"
 
-        sp = compute_spike_for_token(tok, use_completed_bar=True)
-        if not sp or sp.get("spike") is None:
-            continue
+    open_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    close_dt = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    in_session = (open_dt <= now < close_dt)
 
-        rows.append({
-            "Symbol": sym,
-            "Change%": _r(pct_from_open(tok), 2),
-            "Spike": _r(sp["spike"], 2),
-        })
+    fresh = False
+    with LOCK:
+        if LAST_TICK_TS:
+            fresh = (time.time() - LAST_TICK_TS) <= 20
 
-    if not rows:
-        return [], []
-
-    df = pd.DataFrame(rows)
-    topn = df.sort_values("Spike", ascending=False).head(n).to_dict("records")
-    botn = df.sort_values("Spike", ascending=True).head(n).to_dict("records")
-    return topn, botn
+    return "LIVE" if (in_session and fresh) else "CLOSED"
 
 
-# ------------------- HISTORY SEEDING (so Spike works quickly) -------------------
-def seed_history_once(days_back: int = 7, interval: str = "5minute", per_req_sleep: float = 0.35):
-    global _seed_started, SEED_DONE, SEED_ERRORS
-
-    if _seed_started:
-        return
-    _seed_started = True
-
-    def _run():
-        global SEED_DONE, SEED_ERRORS
-        to_dt = datetime.now()
-        from_dt = to_dt - timedelta(days=days_back)
-
-        total = len(TOKENS)
-        SEED_PROGRESS["total"] = total
-        SEED_PROGRESS["done"] = 0
-
-        for i, tok in enumerate(TOKENS, start=1):
-            try:
-                candles = kite.historical_data(
-                    instrument_token=tok,
-                    from_date=from_dt,
-                    to_date=to_dt,
-                    interval=interval,
-                    continuous=False,
-                    oi=False,
-                )
-            except Exception:
-                SEED_ERRORS += 1
-                candles = []
-
-            with LOCK:
-                ensure(tok)
-                BARS[tok].clear()
-
-                for c in candles[-300:]:
-                    dt = c["date"]
-                    BARS[tok].append({
-                        "bucket": floor_5m(dt),
-                        "open": c["open"],
-                        "high": c["high"],
-                        "low": c["low"],
-                        "close": c["close"],
-                        "vol_5m": c.get("volume", 0) or 0,
-                    })
-
-                # synthetic CUR so Price shows before first ticks
-                if candles and tok not in CUR:
-                    last_close = candles[-1]["close"]
-                    CUR[tok] = {
-                        "bucket": floor_5m(datetime.now()),
-                        "open": last_close,
-                        "high": last_close,
-                        "low": last_close,
-                        "close": last_close,
-                        "vol_5m": 0,
-                        "synthetic": True,
-                    }
-
-            SEED_PROGRESS["done"] = i
-            time.sleep(per_req_sleep)
-
-        SEED_DONE = True
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
-# ------------------- BACKGROUND TICKER (start once) -------------------
+# ------------------- BACKGROUND TICKER -------------------
 _started = False
 
 def start_ticker_once():
@@ -436,11 +534,9 @@ def start_ticker_once():
             last_dt = None
             with LOCK:
                 for t in ticks:
-                    ts = t.get("exchange_timestamp")
+                    ts = update_from_tick(t)
                     if ts and (last_dt is None or ts > last_dt):
                         last_dt = ts
-                    update_from_tick(t)
-
                 _record_tick_batch(len(ticks), last_dt)
 
         kws.on_connect = on_connect
@@ -454,50 +550,196 @@ def start_ticker_once():
 
 
 # ------------------- DASH APP -------------------
-ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
-
 dash_app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.CYBORG],
-    requests_pathname_prefix=BASE,   # browser URLs (/dash/...)
-    routes_pathname_prefix="/",      # Flask after mount strips /dash
-    assets_folder=ASSETS_DIR,
+    requests_pathname_prefix=BASE,
+    routes_pathname_prefix="/",
+    assets_folder=os.path.join(os.path.dirname(__file__), "assets"),
     suppress_callback_exceptions=True,
 )
 server = dash_app.server
 
 
-def top_nav(pathname: str):
-    pathname = pathname or f"{BASE}"
-    if pathname in ("/dash", "/dash/"):
-        pathname = f"{BASE}"
+def get_user_from_dash_request() -> Optional[dict]:
+    """
+    Dash runs under Flask (WSGI). Read cookie from Flask request headers.
+    """
+    try:
+        from flask import request as flask_request  # type: ignore
+        cookie_hdr = flask_request.headers.get("Cookie", "") or ""
+        return verify_session_cookie_from_headers(Headers({"cookie": cookie_hdr}))
+    except Exception:
+        return None
 
-    is_intr = pathname == f"{BASE}intrabuzz"
-    is_heat = pathname == f"{BASE}heatmap"
-    is_sectors = (pathname == f"{BASE}") or pathname.startswith(f"{BASE}sector/")
+
+def subscription_overlay(uname: str):
+    overlay_style = {
+        "position": "fixed",
+        "inset": "0",
+        "background": "rgba(0,0,0,0.55)",
+        "backdropFilter": "blur(10px)",
+        "WebkitBackdropFilter": "blur(10px)",
+        "display": "flex",
+        "alignItems": "center",
+        "justifyContent": "center",
+        "zIndex": "9999",
+        "padding": "18px",
+    }
+    panel_style = {
+        "width": "min(720px, 96vw)",
+        "borderRadius": "22px",
+        "border": "1px solid rgba(255,255,255,0.14)",
+        "background": "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.035))",
+        "boxShadow": "0 28px 80px rgba(0,0,0,0.65)",
+        "padding": "18px 18px 16px",
+    }
+    plan_card = {
+        "borderRadius": "18px",
+        "border": "1px solid rgba(255,255,255,0.12)",
+        "background": "rgba(0,0,0,0.18)",
+        "padding": "14px",
+        "boxShadow": "inset 0 1px 0 rgba(255,255,255,0.08)",
+        "height": "100%",
+    }
+    btn = {
+        "display": "inline-flex",
+        "alignItems": "center",
+        "justifyContent": "center",
+        "width": "100%",
+        "padding": "12px 14px",
+        "borderRadius": "14px",
+        "border": "1px solid rgba(255,255,255,0.14)",
+        "background": "linear-gradient(135deg, rgba(34,211,238,0.95), rgba(59,130,246,0.85))",
+        "color": "#06101A",
+        "fontWeight": "900",
+        "textDecoration": "none",
+        "marginTop": "12px",
+    }
+    btn2 = dict(btn)
+    btn2["background"] = "linear-gradient(135deg, rgba(168,85,247,0.92), rgba(236,72,153,0.72))"
+
+    return html.Div(
+        html.Div(
+            html.Div(
+                [
+                    html.Div("Subscription Required", style={"fontWeight": "950", "fontSize": "20px"}),
+                    html.Div(
+                        f"Hi {uname}. Choose a plan to unlock the dashboard.",
+                        style={"opacity": 0.72, "marginTop": "6px", "fontSize": "13px"},
+                    ),
+                    html.Hr(style={"borderColor": "rgba(255,255,255,0.10)"}),
+
+                    dbc.Row(
+                        [
+                            dbc.Col(
+                                html.Div(
+                                    [
+                                        html.Div("6 Months", style={"fontWeight": "950", "fontSize": "16px"}),
+                                        html.Div("₹ 4999", style={"fontWeight": "950", "fontSize": "28px", "marginTop": "8px"}),
+                                        html.Div("Access for 6 months • Full dashboard", style={"opacity": 0.7, "marginTop": "6px", "fontSize": "13px"}),
+                                        html.A("Buy 6 Months", href="/subscribe/activate?plan=6m", style=btn),
+                                    ],
+                                    style=plan_card,
+                                ),
+                                md=6,
+                            ),
+                            dbc.Col(
+                                html.Div(
+                                    [
+                                        html.Div("Lifetime", style={"fontWeight": "950", "fontSize": "16px"}),
+                                        html.Div("₹ 9999", style={"fontWeight": "950", "fontSize": "28px", "marginTop": "8px"}),
+                                        html.Div("Lifetime access • Full dashboard", style={"opacity": 0.7, "marginTop": "6px", "fontSize": "13px"}),
+                                        html.A("Buy Lifetime", href="/subscribe/activate?plan=lifetime", style=btn2),
+                                    ],
+                                    style=plan_card,
+                                ),
+                                md=6,
+                            ),
+                        ],
+                        className="g-2",
+                    ),
+
+                    html.Div(
+                        "Note: Payment gateway is not wired yet. These buttons activate subscription for now.",
+                        style={"opacity": 0.55, "marginTop": "12px", "fontSize": "12px"},
+                    ),
+                    html.Div([html.A("Logout", href="/logout")], style={"marginTop": "10px", "fontSize": "12px"}),
+                ],
+                style=panel_style,
+            ),
+            style=overlay_style,
+        )
+    )
+
+
+def top_nav(uname: str, plan_text: str):
+    state = market_live_closed()
+
+    def pill(text: str, kind: str):
+        cls = "nav-link top-tab"
+        style = {"cursor": "default"}
+
+        if kind == "live":
+            style |= {
+                "background": "linear-gradient(90deg, rgba(51,255,139,0.22), rgba(51,255,139,0.10))",
+                "borderColor": "rgba(51,255,139,0.30)",
+                "color": "rgba(51,255,139,0.95)",
+                "boxShadow": "0 18px 44px rgba(51,255,139,0.10)",
+            }
+        elif kind == "closed":
+            style |= {
+                "background": "linear-gradient(90deg, rgba(255,81,102,0.22), rgba(255,81,102,0.10))",
+                "borderColor": "rgba(255,81,102,0.30)",
+                "color": "rgba(255,81,102,0.95)",
+                "boxShadow": "0 18px 44px rgba(255,81,102,0.10)",
+            }
+        elif kind == "plan":
+            style |= {
+                "background": "linear-gradient(90deg, rgba(59,130,246,0.22), rgba(168,85,247,0.18))",
+                "borderColor": "rgba(255,255,255,0.18)",
+                "color": "rgba(255,255,255,0.92)",
+                "boxShadow": "0 18px 44px rgba(59,130,246,0.10)",
+            }
+
+        return dbc.NavItem(html.Div(text, className=cls, style=style))
 
     return dbc.Nav(
         [
-            dbc.NavLink("Intrabuzz", href=f"{BASE}intrabuzz", active=is_intr, className="top-tab"),
-            dbc.NavLink("Sectors", href=f"{BASE}", active=is_sectors, className="top-tab"),
-            dbc.NavLink("Heatmap", href=f"{BASE}heatmap", active=is_heat, className="top-tab"),
+            pill(state, "live" if state == "LIVE" else "closed"),
+            pill(uname, "user"),
+            pill(plan_text, "plan"),
         ],
         pills=True,
         className="top-tabs",
     )
 
 
+def locked_page():
+    return dbc.Alert(
+        "Dashboard is locked until you activate a subscription.",
+        color="secondary",
+        className="page-wrap",
+    )
+
+
 def sectors_page():
-    # ✅ ONLY Symbol + Change% + Spike in Top/Bottom tables
     common_cols = [
-        {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "StockCell", "minWidth": 170},
+        {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "SymbolCell", "minWidth": 120},
         {"field": "Change%", "type": "rightAligned",
          "valueFormatter": {"function": "fmtPct(params.value)"},
          "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-        {"field": "Spike", "type": "rightAligned",
+        {"field": "RFactor", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}},
+        {"field": "DirR", "type": "rightAligned",
          "valueFormatter": {"function": "fmtSigned2(params.value)"},
          "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
     ]
+
+    grid_opts = {
+        "getRowId": {"function": "params.data.Symbol"},
+        "alwaysShowVerticalScroll": True,
+        "animateRows": True,
+    }
 
     return html.Div(
         [
@@ -505,7 +747,7 @@ def sectors_page():
 
             html.H4("Sectors", className="page-title"),
             html.Div(id="sector-bars", className="sector-bars-wrap"),
-            html.Div("Sorted by MEDIAN Change% from Market Open (no reset).", className="hint"),
+            html.Div("Sorted by AVG DirRFactor (sector strength).", className="hint"),
 
             html.Hr(),
 
@@ -513,30 +755,30 @@ def sectors_page():
                 [
                     dbc.Col(
                         [
-                            html.H6("Top 10 Spike (last completed 5m)", className="mt-1"),
+                            html.H6("Top 15 Gainers (by RFactor)", className="mt-1"),
                             dag.AgGrid(
-                                id="top10-spike-grid",
+                                id="top15-gainers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
                                 columnDefs=common_cols,
                                 rowData=[],
                                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                                dashGridOptions={"getRowId": {"function": "params.data.Symbol"}},
-                                style={"height": "38vh", "width": "100%"},
+                                dashGridOptions=grid_opts,
+                                style={"height": "min(760px, 72vh)", "width": "100%"},
                             ),
                         ],
                         md=6,
                     ),
                     dbc.Col(
                         [
-                            html.H6("Bottom 10 Spike (last completed 5m)", className="mt-1"),
+                            html.H6("Top 15 Losers (by RFactor)", className="mt-1"),
                             dag.AgGrid(
-                                id="bottom10-spike-grid",
+                                id="top15-losers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
                                 columnDefs=common_cols,
                                 rowData=[],
                                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                                dashGridOptions={"getRowId": {"function": "params.data.Symbol"}},
-                                style={"height": "38vh", "width": "100%"},
+                                dashGridOptions=grid_opts,
+                                style={"height": "min(760px, 72vh)", "width": "100%"},
                             ),
                         ],
                         md=6,
@@ -549,7 +791,7 @@ def sectors_page():
     )
 
 
-def sector_page(sector):
+def sector_page(sector: str):
     return html.Div(
         [
             dcc.Interval(id="refresh_sector", interval=2000, n_intervals=0),
@@ -568,33 +810,23 @@ def sector_page(sector):
                 id="grid",
                 className="ag-theme-alpine-dark grid-wrap",
                 columnDefs=[
-                    {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "StockCell", "minWidth": 240},
-
-                    {"field": "Price", "type": "rightAligned",
-                     "valueFormatter": {"function": "fmt2(params.value)"}},
-
+                    {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "StockCell", "minWidth": 200},
+                    {"field": "Price", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}},
                     {"field": "Change", "type": "rightAligned",
                      "valueFormatter": {"function": "fmtSigned2(params.value)"},
                      "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-
                     {"field": "Change%", "type": "rightAligned",
                      "valueFormatter": {"function": "fmtPct(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
-                     "sort": "desc"},
-
-                    {"field": "Range/ATR", "type": "rightAligned",
-                     "valueFormatter": {"function": "fmt2(params.value)"}},
-
-                    {"field": "Spike", "type": "rightAligned",
-                     "cellRenderer": "SpikeChip",
-                     "valueFormatter": {"function": "fmtSigned2(params.value)"}},
-
-                    {"field": "SpikeAbs", "headerName": "SpikeAbs", "type": "rightAligned",
-                     "valueFormatter": {"function": "fmt2(params.value)"}},
+                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
+                    {"field": "RFactor", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}, "sort": "desc"},
+                    {"field": "DirR", "type": "rightAligned",
+                     "valueFormatter": {"function": "fmtSigned2(params.value)"},
+                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
                 ],
                 rowData=[],
                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
                 dashGridOptions={
+                    "alwaysShowVerticalScroll": True,
                     "animateRows": True,
                     "sortingOrder": ["desc", "asc"],
                     "getRowId": {"function": "params.data.Symbol"},
@@ -634,23 +866,30 @@ dash_app.layout = dbc.Container(
     Input("url", "pathname"),
 )
 def route(pathname):
+    decoded = get_user_from_dash_request()
+    uname = user_display_name(decoded)
+    uid = get_uid(decoded)
+
+    if not uid:
+        nav = top_nav(uname, "PLAN —")
+        return nav, dbc.Alert("Not authenticated.", color="danger", className="page-wrap")
+
+    sub = get_subscription(uid)
+    subscribed = bool(sub.get("subscribed"))
+    plan_text = f"PLAN {(sub.get('plan') or 'ACTIVE').upper()}" if subscribed else "PLAN NO"
+
+    nav = top_nav(uname, plan_text)
+
+    if not subscribed:
+        return nav, html.Div([locked_page(), subscription_overlay(uname)])
+
     pathname = pathname or f"{BASE}"
     if pathname in ("/dash", "/dash/"):
         pathname = f"{BASE}"
 
-    nav = top_nav(pathname)
-
-    if pathname == f"{BASE}intrabuzz":
-        body = dbc.Alert("Intrabuzz placeholder", color="secondary", className="page-wrap")
-        return nav, body
-
     if pathname.startswith(f"{BASE}sector/"):
         sector = unquote(pathname.split(f"{BASE}sector/")[1]).upper()
         body = sector_page(sector) if sector in SECTOR_DEFINITIONS else dbc.Alert("Sector not found", color="danger")
-        return nav, body
-
-    if pathname == f"{BASE}heatmap":
-        body = dbc.Alert("Heatmap placeholder", color="secondary", className="page-wrap")
         return nav, body
 
     return nav, sectors_page()
@@ -661,34 +900,29 @@ def update_top_stats(_):
     updated_str = datetime.now().strftime("%H:%M:%S")
 
     with LOCK:
-        if not SEED_DONE:
-            done = SEED_PROGRESS.get("done", 0)
-            total = SEED_PROGRESS.get("total", 0)
-            return html.Div(
-                [
-                    dbc.Badge("Seeding", color="warning", className="stat-badge"),
-                    html.Div(f"{done}/{total}", className="stat-chip"),
-                    html.Div(f"Errors {SEED_ERRORS}", className="stat-chip"),
-                    html.Div(f"Updated {updated_str}", className="stat-chip"),
-                ],
-                className="top-stats-wrap",
-            )
-
         offline = (time.time() - LAST_TICK_TS) > 10 if LAST_TICK_TS else True
         tps = _get_tps()
         tot = TOTAL_TICKS
+        d_done = DAILY_SEED_DONE
+        d_done_n = DAILY_SEED_PROGRESS.get("done", 0)
+        d_total = DAILY_SEED_PROGRESS.get("total", 0)
 
-    return html.Div(
-        [
-            dbc.Badge("Offline" if offline else "Live",
-                      color=("danger" if offline else "success"),
-                      className="stat-badge"),
-            html.Div(f"TPS {tps:.1f}", className="stat-chip"),
-            html.Div(f"Ticks {tot:,}", className="stat-chip"),
-            html.Div(f"Updated {updated_str}", className="stat-chip"),
-        ],
-        className="top-stats-wrap",
-    )
+    # No username/plan here (no duplication)
+    chips = [
+        dbc.Badge("Offline" if offline else "Live",
+                  color=("danger" if offline else "success"),
+                  className="stat-badge"),
+        html.Div(f"TPS {tps:.1f}", className="stat-chip"),
+        html.Div(f"Ticks {tot:,}", className="stat-chip"),
+    ]
+
+    if not d_done:
+        chips.append(dbc.Badge("Seeding", color="warning", className="stat-badge"))
+        chips.append(html.Div(f"20D {d_done_n}/{d_total} (err {DAILY_SEED_ERRORS})", className="stat-chip"))
+
+    chips.append(html.A("Logout", href="/logout", className="stat-chip", style={"cursor": "pointer"}))
+    chips.append(html.Div(f"Updated {updated_str}", className="stat-chip"))
+    return html.Div(chips, className="top-stats-wrap")
 
 
 @dash_app.callback(
@@ -696,8 +930,13 @@ def update_top_stats(_):
     Input("refresh_sectors", "n_intervals"),
 )
 def render_sector_bars(_):
+    decoded = get_user_from_dash_request()
+    uid = get_uid(decoded)
+    if not uid or not get_subscription(uid).get("subscribed"):
+        return []
+
     with LOCK:
-        scores = compute_sector_change_pct_median()
+        scores = compute_sector_dirr_mean()
 
     items = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     max_abs = max([abs(v) for _, v in items] + [1e-6])
@@ -710,9 +949,8 @@ def render_sector_bars(_):
     for sector, val in items:
         h = int(base_h + scale_h * (abs(val) / max_abs))
         h = min(h, cap_h)
-
         cls = "bar-green" if val >= 0 else "bar-red"
-        label = f"{val:+.2f}%"
+        label = f"{val:+.2f}×"
 
         children.append(
             dcc.Link(
@@ -728,18 +966,24 @@ def render_sector_bars(_):
                 ),
             )
         )
+
     return children
 
 
 @dash_app.callback(
-    Output("top10-spike-grid", "rowData"),
-    Output("bottom10-spike-grid", "rowData"),
+    Output("top15-gainers-grid", "rowData"),
+    Output("top15-losers-grid", "rowData"),
     Input("refresh_sectors", "n_intervals"),
 )
-def update_spike_leaderboards(_):
+def update_rfactor_leaderboards(_):
+    decoded = get_user_from_dash_request()
+    uid = get_uid(decoded)
+    if not uid or not get_subscription(uid).get("subscribed"):
+        return [], []
+
     with LOCK:
-        top10, bot10 = top_bottom_spike_rows(n=10)
-    return top10, bot10
+        gainers, losers = top_gainers_losers_rfactor_rows(n=15)
+    return gainers, losers
 
 
 @dash_app.callback(
@@ -748,42 +992,207 @@ def update_spike_leaderboards(_):
     Input("url", "pathname"),
 )
 def update_grid(_, pathname):
+    decoded = get_user_from_dash_request()
+    uid = get_uid(decoded)
+    if not uid or not get_subscription(uid).get("subscribed"):
+        return []
+
     if not pathname or not pathname.startswith(f"{BASE}sector/"):
         return dash.no_update
+
     sector = unquote(pathname.split(f"{BASE}sector/")[1]).upper()
     if sector not in SECTOR_DEFINITIONS:
         return []
+
     with LOCK:
-        return sector_rows_sorted_by_change_pct(sector)
+        return sector_rows_sorted_by_rfactor(sector)
 
 
-# ------------------- FASTAPI APP (export as `app`) -------------------
+# ------------------- FASTAPI APP -------------------
 app = FastAPI(title="Stocker")
+
+HERE = Path(__file__).resolve().parent
+THEME_PATH = HERE / "assets" / "theme.css"
+
 
 @app.on_event("startup")
 def _startup():
-    seed_history_once(days_back=7, interval="5minute", per_req_sleep=0.35)
+    seed_daily_stats_once(per_req_sleep=0.35)
     start_ticker_once()
+
+
+@app.get("/theme.css")
+def theme_css():
+    if THEME_PATH.exists():
+        return FileResponse(THEME_PATH, media_type="text/css")
+    return JSONResponse({"error": "theme.css not found"}, status_code=404)
+
+
+LOGIN_HTML = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Login • TradeCorner</title>
+  <link rel="stylesheet" href="/theme.css">
+</head>
+<body class="login-body">
+  <div class="login-stage">
+    <div class="login-blur"></div>
+    <div class="login-cardWrap">
+      <div class="login-panel">
+        <div class="login-title">TradeCorner • Login</div>
+        <div class="login-sub">Sign in with Google to access the dashboard.</div>
+        <button class="login-btn" id="googleBtn">Login with Google</button>
+        <div class="login-err" id="err"></div>
+        <div class="login-foot">If login fails, check pop-up blockers.</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import {{ initializeApp }} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import {{ getAuth, GoogleAuthProvider, signInWithPopup }}
+      from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+    const firebaseConfig = {json.dumps(FIREBASE_WEB_CONFIG)};
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+
+    function qs(name) {{
+      const u = new URL(window.location.href);
+      return u.searchParams.get(name) || "";
+    }}
+
+    async function sessionLogin(idToken) {{
+      const res = await fetch("/auth/sessionLogin", {{
+        method: "POST",
+        headers: {{ "content-type": "application/json" }},
+        credentials: "include",
+        body: JSON.stringify({{ idToken }})
+      }});
+      if (!res.ok) {{
+        const txt = await res.text();
+        throw new Error(txt || ("HTTP " + res.status));
+      }}
+    }}
+
+    document.getElementById("googleBtn").addEventListener("click", async () => {{
+      const errEl = document.getElementById("err");
+      errEl.textContent = "";
+      try {{
+        const result = await signInWithPopup(auth, provider);
+        const idToken = await result.user.getIdToken(true);
+        await sessionLogin(idToken);
+        const next = qs("next") || "{BASE}";
+        window.location.href = next;
+      }} catch (e) {{
+        errEl.textContent = String(e && e.message ? e.message : e);
+      }}
+    }});
+  </script>
+</body>
+</html>
+"""
+
+
+@app.get("/login")
+def login():
+    return HTMLResponse(LOGIN_HTML)
+
+
+@app.post("/auth/sessionLogin")
+async def session_login(request: Request):
+    data = await request.json()
+    id_token = (data or {}).get("idToken", "")
+    if not id_token:
+        return JSONResponse({"error": "missing idToken"}, status_code=400)
+
+    try:
+        decoded = fb_auth.verify_id_token(id_token)
+        expires_in = SESSION_EXPIRES_DAYS * 24 * 60 * 60
+        session_cookie = fb_auth.create_session_cookie(id_token, expires_in=expires_in)
+    except Exception as e:
+        return JSONResponse({"error": f"auth failed: {repr(e)}"}, status_code=401)
+
+    resp = JSONResponse({"ok": True, "uid": decoded.get("uid")})
+    resp.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_cookie,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=expires_in,
+        path="/",
+    )
+    return resp
+
+
+@app.get("/logout")
+def logout():
+    resp = RedirectResponse(url="/login", status_code=307)
+    resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return resp
+
+
+@app.get("/subscribe/activate")
+def subscribe_activate(request: Request, plan: str = "6m"):
+    """
+    DEMO activation endpoint.
+    Replace with real payment verification before calling activate_subscription().
+    """
+    decoded = verify_session_cookie_from_headers(Headers(request.headers))
+    if not decoded:
+        return RedirectResponse(url="/login?next=/dash/", status_code=307)
+
+    uid = decoded.get("uid")
+    try:
+        activate_subscription(uid, plan, decoded_user=decoded)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    return RedirectResponse(url="/dash/", status_code=307)
+
+
+@app.get("/api/me")
+def api_me(request: Request):
+    decoded = verify_session_cookie_from_headers(Headers(request.headers))
+    if not decoded:
+        return JSONResponse({"ok": False, "error": "not authenticated"}, status_code=401)
+
+    uid = decoded.get("uid")
+    nm = user_display_name(decoded)
+    sub = get_subscription(uid)
+
+    return JSONResponse({
+        "ok": True,
+        "uid": uid,
+        "name": nm,
+        "subscribed": bool(sub.get("subscribed")),
+        "plan": sub.get("plan"),
+        "expires_at": (sub.get("expires_at").isoformat() if sub.get("expires_at") else None),
+    })
+
 
 @app.get("/health")
 def health():
     with LOCK:
         return {
             "status": "ok",
-            "seed_done": SEED_DONE,
-            "seed_progress": SEED_PROGRESS,
-            "seed_errors": SEED_ERRORS,
+            "seed_20d_done": DAILY_SEED_DONE,
+            "seed_20d_progress": DAILY_SEED_PROGRESS,
+            "seed_20d_errors": DAILY_SEED_ERRORS,
             "tps": round(_get_tps(), 3),
             "total_ticks": TOTAL_TICKS,
             "last_tick_time": (LAST_TICK_DT.isoformat() if LAST_TICK_DT else None),
         }
 
-@app.get("/dash")
-def _dash_redirect():
-    return RedirectResponse(url="/dash/")
 
 @app.get("/")
 def root():
-    return RedirectResponse(url="/dash/")
+    return RedirectResponse(url=f"{BASE}", status_code=307)
 
-app.mount("/dash", WSGIMiddleware(server))
+
+# Protect dashboard behind login session cookie
+app.mount("/dash", AuthGate(WSGIMiddleware(server)))

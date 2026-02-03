@@ -732,13 +732,13 @@ a:hover{
 
 /* Make each sector card a bit slimmer */
 .sector-bar-card{
-  width: 95px;              /* was ~92-96 */
-  padding: 12px 8px 12px;   /* tighter */
+  width: 95px;
+  padding: 12px 8px 12px;
 }
 
 /* Make the candle/bar thinner */
 .glow-bar{
-  width: 60px;              /* thinner candle body */
+  width: 60px;
   border-radius: 12px;
 }
 
@@ -754,8 +754,7 @@ a:hover{
   letter-spacing: 0.8px;
 }
 
-/* Ensure bars can look taller (cap height controlled in Python),
-   but add visual “height stretch” feel by reducing padding in wrap */
+/* Ensure bars can look taller (cap height controlled in Python) */
 .sector-bars-wrap{
   padding-top: 14px;
   padding-bottom: 12px;
@@ -765,4 +764,231 @@ a:hover{
 /* Optional: less spacing so more thin candles fit */
 .sector-bars-wrap{
   gap: 12px;
+}
+
+/* =========================
+   NEW: COMPACT GRID (used by your Top 20 Gainers/Losers tables)
+   ========================= */
+.compact-grid{
+  --ag-row-height: 46px;
+  --ag-header-height: 42px;
+  --ag-list-item-height: 42px;
+}
+
+.compact-grid .ag-cell{
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.compact-grid .ag-header-cell-label{
+  font-size: 10.5px;
+  letter-spacing: 0.42px;
+}
+
+/* Optional: slightly tighter symbol pill in compact grids */
+.compact-grid .stock-sym{
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+/* Optional helper (if you ever add a chip class for RFactor) */
+.rf-chip{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(124,92,255,0.28);
+  background: rgba(124,92,255,0.14);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+  font-weight: 950;
+}
+
+/* =========================
+   LOGIN PAGE (Premium Glass)
+   Used by /login (Firebase Google)
+   ========================= */
+
+/* Put class="login-body" on <body> in the login HTML */
+.login-body{
+  min-height: 100vh;
+  margin: 0;
+  font-family: var(--font);
+  color: var(--text);
+  background:
+    radial-gradient(1200px 700px at 18% 12%, rgba(59,130,246,0.22), transparent 60%),
+    radial-gradient(1000px 700px at 85% 18%, rgba(168,85,247,0.20), transparent 60%),
+    radial-gradient(900px 600px at 50% 92%, rgba(34,211,238,0.12), transparent 62%),
+    linear-gradient(180deg, var(--bg0), var(--bg1));
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  padding: 26px;
+  color-scheme: dark;
+}
+
+/* floating blobs */
+.login-body::before{
+  content:"";
+  position: fixed;
+  inset: -120px;
+  pointer-events:none;
+  background:
+    radial-gradient(520px 300px at 18% 18%, rgba(34,211,238,.16), transparent 62%),
+    radial-gradient(620px 360px at 82% 22%, rgba(168,85,247,.18), transparent 62%),
+    radial-gradient(520px 320px at 55% 88%, rgba(59,130,246,.15), transparent 62%);
+  filter: blur(12px);
+  opacity: .95;
+  animation: loginFloat 10s var(--ease) infinite alternate;
+}
+
+@keyframes loginFloat{
+  from{ transform: translate3d(0,0,0) scale(1); }
+  to  { transform: translate3d(0,-14px,0) scale(1.02); }
+}
+
+/* Main stage (big blur card behind) */
+.login-stage{
+  width: min(980px, 96vw);
+  height: min(560px, 86vh);
+  border-radius: 28px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.14);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Gradient ring */
+.login-stage::after{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  border-radius: 30px;
+  padding: 2px;
+  background:
+    linear-gradient(90deg,
+      rgba(59,130,246,0.55),
+      rgba(34,211,238,0.28),
+      rgba(168,85,247,0.45),
+      rgba(236,72,153,0.24)
+    );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events:none;
+  opacity: .65;
+}
+
+/* Deep blur overlay */
+.login-blur{
+  position:absolute;
+  inset:0;
+  background: rgba(0,0,0,0.18);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+
+/* Centered panel wrapper */
+.login-cardWrap{
+  position:absolute;
+  inset:0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+}
+
+/* Actual login panel */
+.login-panel{
+  width: min(440px, 92vw);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.030));
+  border: 1px solid rgba(255,255,255,0.14);
+  box-shadow:
+    0 24px 70px rgba(0,0,0,0.58),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+  padding: 18px 18px 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* sheen */
+.login-panel::before{
+  content:"";
+  position:absolute;
+  inset:-60% -70%;
+  background: linear-gradient(120deg,
+    transparent 42%,
+    rgba(255,255,255,0.10) 50%,
+    transparent 58%);
+  transform: translateX(-18%);
+  opacity: .40;
+  animation: loginSheen 3.2s linear infinite;
+  pointer-events:none;
+}
+@keyframes loginSheen{
+  0%   { transform: translateX(-22%); }
+  100% { transform: translateX(22%); }
+}
+
+/* brand */
+.login-title{
+  font-weight: 950;
+  font-size: 22px;
+  letter-spacing: .2px;
+  text-shadow: 0 0 26px rgba(59,130,246,0.20);
+}
+.login-sub{
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Google button */
+.login-btn{
+  margin-top: 16px;
+  width: 100%;
+  cursor: pointer;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: linear-gradient(135deg, rgba(34,211,238,0.95), rgba(59,130,246,0.85));
+  color: #06101A;
+  font-weight: 950;
+  font-size: 14px;
+  box-shadow: 0 18px 46px rgba(34,211,238,0.16);
+  transition: transform var(--dur) var(--ease), filter var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.login-btn:hover{
+  transform: translateY(-1px);
+  filter: brightness(1.04);
+  box-shadow: 0 22px 56px rgba(34,211,238,0.18);
+}
+.login-btn:active{
+  transform: translateY(0px);
+  filter: brightness(.99);
+}
+
+/* error text */
+.login-err{
+  margin-top: 12px;
+  color: var(--bad);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+/* footer */
+.login-foot{
+  margin-top: 12px;
+  color: rgba(255,255,255,0.55);
+  font-size: 12px;
+}
+
+@media (max-width: 640px){
+  .login-stage{ height: min(520px, 86vh); }
+  .login-panel{ padding: 16px; }
 }

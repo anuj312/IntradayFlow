@@ -4,7 +4,7 @@ var dagcomponentfuncs =
   window.dashAgGridComponentFunctions = window.dashAgGridComponentFunctions || {};
 
 // --------------------
-// Basic formatters (used by app.py valueFormatter calls)
+// Basic formatters
 // --------------------
 window.fmt2 = function (v) {
   if (v === null || v === undefined || isNaN(v)) return "";
@@ -29,7 +29,7 @@ window.fmtInt = function (v) {
 };
 
 // --------------------
-// Spike chip renderer
+// Spike chip renderer (still used in sector drilldown grid)
 // --------------------
 dagcomponentfuncs.SpikeChip = function (params) {
   const v = params.value;
@@ -43,18 +43,72 @@ dagcomponentfuncs.SpikeChip = function (params) {
 };
 
 // --------------------
+// OPTIONAL: RFactor chip renderer (not required)
+// If you want to use it: set columnDefs cellRenderer: "RFactorChip"
+// --------------------
+dagcomponentfuncs.RFactorChip = function (params) {
+  const v = params.value;
+  if (v === null || v === undefined || isNaN(v)) return "";
+
+  const n = Number(v);
+  let bg = "rgba(124,92,255,.18)";
+  let bd = "rgba(124,92,255,.35)";
+
+  if (n >= 10) { bg = "rgba(34,197,94,.18)"; bd = "rgba(34,197,94,.40)"; }
+  else if (n >= 5) { bg = "rgba(34,211,238,.16)"; bd = "rgba(34,211,238,.35)"; }
+  else if (n >= 2) { bg = "rgba(124,92,255,.16)"; bd = "rgba(124,92,255,.32)"; }
+
+  const style = {
+    display: "inline-block",
+    padding: "4px 10px",
+    borderRadius: "999px",
+    border: "1px solid " + bd,
+    background: bg,
+    fontWeight: 900,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono','Courier New', monospace",
+  };
+
+  return React.createElement("span", { style }, n.toFixed(2));
+};
+
+// --------------------
+// Symbol-only cell renderer (TradingView link, NO company name)
+// --------------------
+dagcomponentfuncs.SymbolCell = function (params) {
+  const sym = params.value || "";
+  const tvSymbol = "NSE:" + sym;
+  const tvUrl =
+    "https://www.tradingview.com/chart/?symbol=" +
+    encodeURIComponent(tvSymbol) +
+    "&interval=5";
+
+  return React.createElement(
+    "a",
+    {
+      href: tvUrl,
+      target: "_blank",
+      rel: "noopener noreferrer",
+      className: "stock-sym",
+      onClick: function (e) {
+        e.stopPropagation();
+      },
+    },
+    sym
+  );
+};
+
+// --------------------
 // Stock cell renderer (opens TradingView chart in NEW TAB)
 // --------------------
 dagcomponentfuncs.StockCell = function (params) {
   const sym = params.value || "";
   const name = (params.data && params.data.Company) ? params.data.Company : "";
 
-  // TradingView symbol mapping
   const tvSymbol = "NSE:" + sym; // change to "BSE:" if needed
   const tvUrl =
-  "https://www.tradingview.com/chart/?symbol=" +
-  encodeURIComponent(tvSymbol) +
-  "&interval=5";
+    "https://www.tradingview.com/chart/?symbol=" +
+    encodeURIComponent(tvSymbol) +
+    "&interval=5";
 
   return React.createElement(
     "div",
@@ -68,10 +122,7 @@ dagcomponentfuncs.StockCell = function (params) {
           target: "_blank",
           rel: "noopener noreferrer",
           className: "stock-sym",
-          onClick: function (e) {
-            // prevent ag-grid row click/selection from also firing
-            e.stopPropagation();
-          },
+          onClick: function (e) { e.stopPropagation(); },
         },
         sym
       ),
