@@ -730,44 +730,38 @@ a:hover{
    Put at END of CSS
    ========================= */
 
-/* Make each sector card a bit slimmer */
 .sector-bar-card{
   width: 95px;
   padding: 12px 8px 12px;
 }
 
-/* Make the candle/bar thinner */
 .glow-bar{
   width: 60px;
   border-radius: 12px;
 }
 
-/* Slightly narrower value pill so it fits */
 .bar-value{
   padding: 6px 8px;
   font-size: 12px;
 }
 
-/* Keep label compact */
 .bar-name{
   font-size: 12px;
   letter-spacing: 0.8px;
 }
 
-/* Ensure bars can look taller (cap height controlled in Python) */
 .sector-bars-wrap{
   padding-top: 14px;
   padding-bottom: 12px;
   align-items: flex-end;
 }
 
-/* Optional: less spacing so more thin candles fit */
 .sector-bars-wrap{
   gap: 12px;
 }
 
 /* =========================
-   NEW: COMPACT GRID (used by your Top 20 Gainers/Losers tables)
+   COMPACT GRID
    ========================= */
 .compact-grid{
   --ag-row-height: 46px;
@@ -783,12 +777,6 @@ a:hover{
 .compact-grid .ag-header-cell-label{
   font-size: 10.5px;
   letter-spacing: 0.42px;
-}
-
-/* Optional: slightly tighter symbol pill in compact grids */
-.compact-grid .stock-sym{
-  padding: 5px 9px;
-  font-size: 12px;
 }
 
 /* Optional helper (if you ever add a chip class for RFactor) */
@@ -808,8 +796,6 @@ a:hover{
    LOGIN PAGE (Premium Glass)
    Used by /login (Firebase Google)
    ========================= */
-
-/* Put class="login-body" on <body> in the login HTML */
 .login-body{
   min-height: 100vh;
   margin: 0;
@@ -827,7 +813,6 @@ a:hover{
   color-scheme: dark;
 }
 
-/* floating blobs */
 .login-body::before{
   content:"";
   position: fixed;
@@ -847,7 +832,6 @@ a:hover{
   to  { transform: translate3d(0,-14px,0) scale(1.02); }
 }
 
-/* Main stage (big blur card behind) */
 .login-stage{
   width: min(980px, 96vw);
   height: min(560px, 86vh);
@@ -859,7 +843,6 @@ a:hover{
   position: relative;
 }
 
-/* Gradient ring */
 .login-stage::after{
   content:"";
   position:absolute;
@@ -882,7 +865,6 @@ a:hover{
   opacity: .65;
 }
 
-/* Deep blur overlay */
 .login-blur{
   position:absolute;
   inset:0;
@@ -891,7 +873,6 @@ a:hover{
   -webkit-backdrop-filter: blur(18px) saturate(150%);
 }
 
-/* Centered panel wrapper */
 .login-cardWrap{
   position:absolute;
   inset:0;
@@ -900,7 +881,6 @@ a:hover{
   padding: 22px;
 }
 
-/* Actual login panel */
 .login-panel{
   width: min(440px, 92vw);
   border-radius: 22px;
@@ -914,7 +894,6 @@ a:hover{
   overflow: hidden;
 }
 
-/* sheen */
 .login-panel::before{
   content:"";
   position:absolute;
@@ -933,7 +912,6 @@ a:hover{
   100% { transform: translateX(22%); }
 }
 
-/* brand */
 .login-title{
   font-weight: 950;
   font-size: 22px;
@@ -947,7 +925,6 @@ a:hover{
   line-height: 1.45;
 }
 
-/* Google button */
 .login-btn{
   margin-top: 16px;
   width: 100%;
@@ -972,7 +949,6 @@ a:hover{
   filter: brightness(.99);
 }
 
-/* error text */
 .login-err{
   margin-top: 12px;
   color: var(--bad);
@@ -981,7 +957,6 @@ a:hover{
   white-space: pre-wrap;
 }
 
-/* footer */
 .login-foot{
   margin-top: 12px;
   color: rgba(255,255,255,0.55);
@@ -991,4 +966,63 @@ a:hover{
 @media (max-width: 640px){
   .login-stage{ height: min(520px, 86vh); }
   .login-panel{ padding: 16px; }
+}
+
+/* =========================================================
+   FIX: Top Gainers/Losers "Stock" symbol looks too big
+   Applies ONLY to compact-grid (Top tables)
+   ========================================================= */
+
+/* prevent clipping of the pill inside ag-grid wrappers */
+.compact-grid .ag-cell[col-id="Symbol"],
+.compact-grid .ag-cell[col-id="Symbol"] .ag-cell-wrapper,
+.compact-grid .ag-cell[col-id="Symbol"] .ag-cell-value,
+.compact-grid .ag-cell[col-id="Symbol"] .ag-cell-value > span{
+  overflow: visible !important;
+}
+
+/* center the symbol nicely */
+.compact-grid .ag-cell[col-id="Symbol"]{
+  display: flex;
+  align-items: center;
+  padding-left: 14px !important;
+}
+
+/* make the pill clean + proportional */
+.compact-grid .ag-cell[col-id="Symbol"] a.stock-sym{
+  align-self: center !important;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  height: 28px;
+  padding: 0 12px;
+
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+
+  background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+
+  font-weight: 950;
+  font-size: 12px;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+
+  color: rgba(34,211,238,0.95);
+  text-decoration: none;
+  white-space: nowrap;
+
+  transform: translateY(0);
+  transition: transform 150ms var(--ease), box-shadow 150ms var(--ease), border-color 150ms var(--ease);
+}
+
+/* hover */
+.compact-grid .ag-cell[col-id="Symbol"] a.stock-sym:hover{
+  border-color: rgba(34,211,238,0.30);
+  box-shadow:
+    0 14px 34px rgba(0,0,0,0.40),
+    0 0 20px rgba(34,211,238,0.10);
+  transform: translateY(-1px);
 }

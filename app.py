@@ -497,21 +497,20 @@ def sector_rows_sorted_by_rfactor(sector: str):
 # ------------------- MARKET STATUS (LIVE/CLOSED) -------------------
 IST = ZoneInfo("Asia/Kolkata")
 
-def market_live_closed() -> str:
+def market_status() -> str:
     now = datetime.now(IST)
     if now.weekday() >= 5:
         return "CLOSED"
 
-    open_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
-    close_dt = now.replace(hour=15, minute=30, second=0, microsecond=0)
-    in_session = (open_dt <= now < close_dt)
+    preopen_dt = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    open_dt    = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    close_dt   = now.replace(hour=15, minute=30, second=0, microsecond=0)
 
-    fresh = False
-    with LOCK:
-        if LAST_TICK_TS:
-            fresh = (time.time() - LAST_TICK_TS) <= 20
-
-    return "LIVE" if (in_session and fresh) else "CLOSED"
+    if preopen_dt <= now < open_dt:
+        return "PREOPEN"
+    if open_dt <= now < close_dt:
+        return "OPEN"
+    return "CLOSED"
 
 
 # ------------------- BACKGROUND TICKER -------------------
@@ -527,6 +526,7 @@ def start_ticker_once():
         kws = KiteTicker(API_KEY, ACCESS_TOKEN)
 
         def on_connect(ws, _):
+            print("WS CONNECTED")
             ws.subscribe(TOKENS)
             ws.set_mode(ws.MODE_FULL, TOKENS)
 
@@ -539,8 +539,26 @@ def start_ticker_once():
                         last_dt = ts
                 _record_tick_batch(len(ticks), last_dt)
 
+        def on_close(ws, code, reason):
+            print("WS CLOSED:", code, reason)
+
+        def on_error(ws, code, reason):
+            print("WS ERROR:", code, reason)
+
+        # (optional but useful)
+        def on_reconnect(ws, attempts):
+            print("WS RECONNECT attempt:", attempts)
+
+        def on_noreconnect(ws):
+            print("WS NORECONNECT (gave up)")
+
         kws.on_connect = on_connect
         kws.on_ticks = on_ticks
+        kws.on_close = on_close
+        kws.on_error = on_error
+        kws.on_reconnect = on_reconnect
+        kws.on_noreconnect = on_noreconnect
+
         kws.connect(threaded=True)
 
         while True:
