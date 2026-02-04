@@ -29,7 +29,7 @@ from firebase_admin import credentials, auth as fb_auth, firestore
 
 
 # ------------------- MOUNT PATH -------------------
-BASE = "/dash/"
+BASE = "/dash/"  # https://host/dash/
 
 
 # ------------------- FIREBASE (Web config used on /login) -------------------
@@ -118,7 +118,7 @@ def get_uid(decoded: Optional[dict]) -> Optional[str]:
     return decoded.get("uid") if decoded else None
 
 
-# ------------------- SUBSCRIPTIONS -------------------
+# ------------------- SUBSCRIPTIONS (Firestore) -------------------
 PLAN_6M_PRICE = 4999
 PLAN_LIFE_PRICE = 9999
 PLAN_6M_DAYS = int(os.getenv("PLAN_6M_DAYS", "183"))
@@ -187,7 +187,7 @@ def activate_subscription(uid: str, plan: str, decoded_user: Optional[dict] = No
     ref.set(payload, merge=True)
 
 
-# ------------------- AUTH GATE -------------------
+# ------------------- AUTH GATE (login required) -------------------
 class AuthGate:
     def __init__(self, app):
         self.app = app
@@ -262,7 +262,7 @@ symbol_to_name = dict(zip(ins["tradingsymbol"], ins["name"])) if "name" in ins.c
 TOKENS = sorted(symbol_to_token.values())
 
 
-# ------------------- LIVE STATE -------------------
+# ------------------- LIVE STATE (ticks) -------------------
 LOCK = threading.Lock()
 LAST_PRICE: Dict[int, float] = {}
 DAY_VOL: Dict[int, float] = {}
@@ -274,20 +274,21 @@ TOTAL_TICKS = 0
 TPS_WINDOW_SEC = 1.0
 TPS_BUCKETS = deque()
 
-# ---- Hot Now (15m) rolling history ----
+# Hot Now (15m) history
 HOT_WINDOW_SEC = 15 * 60
 HOT_SAMPLE_SEC = 5
-HOT_HISTORY: Dict[int, deque] = {}  # token -> deque[(epoch, ltp, cumvol)]
+HOT_HISTORY: Dict[int, deque] = {}
 HOT_HISTORY_MAX_SEC = HOT_WINDOW_SEC + 5 * 60
 
-
-# ------------------- DAILY STATS -------------------
+# 20D baselines
 LOOKBACK_SESSIONS = 20
 DAILY_STATS: Dict[int, Dict[str, Optional[float]]] = {}
 DAILY_SEED_STARTED = False
 DAILY_SEED_DONE = False
 DAILY_SEED_PROGRESS = {"done": 0, "total": len(TOKENS)}
 DAILY_SEED_ERRORS = 0
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def _record_tick_batch(count: int, last_dt: Optional[datetime]):
@@ -304,7 +305,7 @@ def _record_tick_batch(count: int, last_dt: Optional[datetime]):
     LAST_TICK_DT = last_dt or datetime.now()
 
 
-def _get_tps():
+def _get_tps() -> float:
     if not TPS_BUCKETS:
         return 0.0
     return sum(c for _, c in TPS_BUCKETS) / TPS_WINDOW_SEC
@@ -406,8 +407,8 @@ def seed_daily_stats_once(per_req_sleep: float = 0.35):
 
 def compute_rfactor_row_for_token(token: int):
     """
-    RFactor uses move SINCE OPEN:
-      pct_open = (ltp - open) / open * 100
+    RFactor move is SINCE TODAY OPEN:
+      pct_open = (LTP - Open) / Open * 100
     """
     ltp = LAST_PRICE.get(token)
     vol_today = DAY_VOL.get(token)
@@ -437,6 +438,7 @@ def compute_rfactor_row_for_token(token: int):
     avg_vol_20 = st.get("avg_vol_20")
     avg_range_20 = st.get("avg_range_20")
     avg_abs_oc_ret_20 = st.get("avg_abs_oc_ret_20")
+
     if not avg_vol_20 or not avg_range_20 or not avg_abs_oc_ret_20:
         return None
 
@@ -504,6 +506,7 @@ def _compute_hot_row_for_token(token: int):
 
 
 def top_gainers_losers_rfactor_rows(n: int = 15):
+    # SHOW: % since OPEN, DirR, Gap%, RFactor
     rows = []
     for sym in ALL_SYMBOLS:
         tok = symbol_to_token.get(sym)
@@ -512,10 +515,9 @@ def top_gainers_losers_rfactor_rows(n: int = 15):
         rr = compute_rfactor_row_for_token(tok)
         if not rr:
             continue
-
         rows.append({
             "Symbol": sym,
-            "% (Open)": round(float(rr["pct_open"]), 2),
+            "Change%": round(float(rr["pct_open"]), 2),   # since open
             "DirR": round(float(rr["dirr"]), 2),
             "Gap%": round(float(rr["gap_pct"]), 2),
             "RFactor": round(float(rr["rfactor"]), 2),
@@ -524,9 +526,9 @@ def top_gainers_losers_rfactor_rows(n: int = 15):
     if not rows:
         return [], []
 
-    df = pd.DataFrame(rows).dropna(subset=["% (Open)", "RFactor"])
-    gainers = df[df["% (Open)"] > 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
-    losers = df[df["% (Open)"] < 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
+    df = pd.DataFrame(rows).dropna(subset=["Change%", "RFactor"])
+    gainers = df[df["Change%"] > 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
+    losers = df[df["Change%"] < 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
     return gainers, losers
 
 
@@ -539,7 +541,6 @@ def top_hot_now_rows(n: int = 15):
         hr = _compute_hot_row_for_token(tok)
         if not hr:
             continue
-
         rows.append({
             "Symbol": sym,
             "Ret15m%": round(float(hr["ret15"]), 2),
@@ -558,6 +559,7 @@ def top_hot_now_rows(n: int = 15):
 
 
 def compute_sector_dirr_mean():
+    # Sector bars sorted by AVG DirR (signed strength)
     out = {}
     for sector, syms in SECTOR_DEFINITIONS.items():
         vals = []
@@ -660,15 +662,13 @@ def start_ticker_once():
 # ------------------- DASH APP -------------------
 dash_app = dash.Dash(
     __name__,
-    external_stylesheets=[dbc.themes.CYBORG],
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
     requests_pathname_prefix=BASE,
     routes_pathname_prefix="/",
     assets_folder=os.path.join(os.path.dirname(__file__), "assets"),
     suppress_callback_exceptions=True,
 )
 server = dash_app.server
-
-IST = ZoneInfo("Asia/Kolkata")
 
 
 def get_user_from_dash_request() -> Optional[dict]:
@@ -781,10 +781,10 @@ def subscription_overlay(uname: str):
 
 
 def top_nav(uname: str, plan_text: str):
+    # OPEN/CLOSED pill removed (as requested)
     def pill(text: str, kind: str):
         cls = "nav-link top-tab"
         style = {"cursor": "default"}
-
         if kind == "plan":
             style |= {
                 "background": "linear-gradient(90deg, rgba(59,130,246,0.22), rgba(168,85,247,0.18))",
@@ -792,7 +792,6 @@ def top_nav(uname: str, plan_text: str):
                 "color": "rgba(255,255,255,0.92)",
                 "boxShadow": "0 18px 44px rgba(59,130,246,0.10)",
             }
-
         return dbc.NavItem(html.Div(text, className=cls, style=style))
 
     return dbc.Nav(
@@ -816,21 +815,16 @@ def locked_page():
 def sectors_page():
     rfactor_cols = [
         {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "SymbolCell", "minWidth": 120},
-
-        {"field": "% (Open)", "type": "rightAligned",
+        {"field": "Change%", "type": "rightAligned",
          "valueFormatter": {"function": "fmtPct(params.value)"},
          "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-
         {"field": "DirR", "type": "rightAligned",
          "valueFormatter": {"function": "fmtSigned2(params.value)"},
          "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-
         {"field": "Gap%", "type": "rightAligned",
          "valueFormatter": {"function": "fmtPct(params.value)"},
          "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-
-        {"field": "RFactor", "type": "rightAligned",
-         "valueFormatter": {"function": "fmt2(params.value)"}},
+        {"field": "RFactor", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}},
     ]
 
     hot_cols = [
@@ -855,7 +849,7 @@ def sectors_page():
 
             html.H4("Sectors", className="page-title"),
             html.Div(id="sector-bars", className="sector-bars-wrap"),
-            html.Div("Sectors sorted by AVG DirR. Top tables sorted by RFactor. Hot Now is last 15m.", className="hint"),
+            html.Div("Sectors sorted by AVG DirR. Tables sorted by RFactor. Change% is since OPEN.", className="hint"),
 
             html.Hr(),
 
@@ -863,7 +857,7 @@ def sectors_page():
                 [
                     dbc.Col(
                         [
-                            html.H6("Top 15 Gainers (sorted by RFactor)", className="mt-1"),
+                            html.H6("Top 15 Gainers (by RFactor)", className="mt-1"),
                             dag.AgGrid(
                                 id="top15-gainers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
@@ -878,7 +872,7 @@ def sectors_page():
                     ),
                     dbc.Col(
                         [
-                            html.H6("Top 15 Losers (sorted by RFactor)", className="mt-1"),
+                            html.H6("Top 15 Losers (by RFactor)", className="mt-1"),
                             dag.AgGrid(
                                 id="top15-losers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
@@ -987,10 +981,10 @@ def sector_page(sector: str):
     )
 
 
-# ---- DASH LAYOUT (theme wrapper + store) ----
+# ---- DASH LAYOUT (Theme wrapper + local store) ----
 dash_app.layout = html.Div(
     id="theme-root",
-    className="theme-dark",   # will be updated from theme-store
+    className="theme-dark",
     children=[
         dcc.Store(id="theme-store", storage_type="local"),
         dcc.Location(id="url"),
@@ -1007,13 +1001,7 @@ dash_app.layout = html.Div(
                                 html.Div(
                                     [
                                         html.Div(id="top-stats-dyn"),
-                                        html.Button(
-                                            "Light",
-                                            id="theme-toggle",
-                                            n_clicks=0,
-                                            type="button",
-                                            className="stat-chip stat-btn",
-                                        ),
+                                        html.Button("Light", id="theme-toggle", n_clicks=0, className="stat-chip stat-btn", type="button"),
                                         html.A("Logout", href="/logout", className="stat-chip"),
                                         html.Div(id="top-updated", className="stat-chip"),
                                     ],
@@ -1026,7 +1014,6 @@ dash_app.layout = html.Div(
                     ),
                     className="topbar-wrap",
                 ),
-
                 html.Div(id="app-body"),
             ],
         ),
@@ -1034,14 +1021,14 @@ dash_app.layout = html.Div(
 )
 
 
-# ---- THEME callbacks ----
+# ------------------- THEME CALLBACKS -------------------
 @dash_app.callback(
     Output("theme-store", "data"),
     Input("theme-toggle", "n_clicks"),
     State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def _toggle_theme(n, data):
+def toggle_theme(_, data):
     cur = (data or {}).get("theme", "dark")
     nxt = "light" if cur == "dark" else "dark"
     return {"theme": nxt}
@@ -1052,13 +1039,13 @@ def _toggle_theme(n, data):
     Output("theme-toggle", "children"),
     Input("theme-store", "data"),
 )
-def _apply_theme(data):
+def apply_theme(data):
     theme = (data or {}).get("theme", "dark")
-    # button text indicates what you will switch TO
     btn = "Light" if theme == "dark" else "Dark"
     return f"theme-{theme}", btn
 
 
+# ------------------- ROUTING -------------------
 @dash_app.callback(
     Output("top-nav", "children"),
     Output("app-body", "children"),
@@ -1094,6 +1081,7 @@ def route(pathname):
     return nav, sectors_page()
 
 
+# ------------------- TOP STATS -------------------
 @dash_app.callback(
     Output("top-stats-dyn", "children"),
     Output("top-updated", "children"),
@@ -1125,10 +1113,8 @@ def update_top_stats(_):
     return chips, f"Updated {updated_str}"
 
 
-@dash_app.callback(
-    Output("sector-bars", "children"),
-    Input("refresh_sectors", "n_intervals"),
-)
+# ------------------- SECTOR BARS + TABLE UPDATES -------------------
+@dash_app.callback(Output("sector-bars", "children"), Input("refresh_sectors", "n_intervals"))
 def render_sector_bars(_):
     decoded = get_user_from_dash_request()
     uid = get_uid(decoded)
@@ -1166,7 +1152,6 @@ def render_sector_bars(_):
                 ),
             )
         )
-
     return children
 
 
@@ -1219,7 +1204,6 @@ def update_grid(_, pathname):
     sector = unquote(pathname.split(f"{BASE}sector/")[1]).upper()
     if sector not in SECTOR_DEFINITIONS:
         return []
-
     with LOCK:
         return sector_rows_sorted_by_rfactor(sector)
 
@@ -1407,4 +1391,5 @@ def root():
     return RedirectResponse(url=f"{BASE}", status_code=307)
 
 
+# Protect dashboard behind login session cookie
 app.mount("/dash", AuthGate(WSGIMiddleware(server)))

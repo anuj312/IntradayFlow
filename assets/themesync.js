@@ -1,3 +1,4 @@
+// assets/themeSync.js
 (function () {
   function sync() {
     var root = document.getElementById("theme-root");
@@ -17,7 +18,10 @@
     var root = document.getElementById("theme-root");
     if (!root) return;
 
-    new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ["class"] });
+    new MutationObserver(sync).observe(root, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
   }
 
   if (document.readyState === "loading") {

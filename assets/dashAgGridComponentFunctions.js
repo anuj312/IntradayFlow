@@ -29,49 +29,6 @@ window.fmtInt = function (v) {
 };
 
 // --------------------
-// Spike chip renderer
-// --------------------
-dagcomponentfuncs.SpikeChip = function (params) {
-  const v = params.value;
-  if (v === null || v === undefined || isNaN(v)) return "";
-
-  const n = Number(v);
-  const cls = n >= 0 ? "spike-chip spike-pos" : "spike-chip spike-neg";
-  const txt = (n >= 0 ? "+" : "") + n.toFixed(2);
-
-  return React.createElement("span", { className: cls }, txt);
-};
-
-// --------------------
-// OPTIONAL: RFactor chip renderer
-// --------------------
-dagcomponentfuncs.RFactorChip = function (params) {
-  const v = params.value;
-  if (v === null || v === undefined || isNaN(v)) return "";
-
-  const n = Number(v);
-  let bg = "rgba(124,92,255,.18)";
-  let bd = "rgba(124,92,255,.35)";
-
-  if (n >= 10) { bg = "rgba(34,197,94,.18)"; bd = "rgba(34,197,94,.40)"; }
-  else if (n >= 5) { bg = "rgba(34,211,238,.16)"; bd = "rgba(34,211,238,.35)"; }
-  else if (n >= 2) { bg = "rgba(124,92,255,.16)"; bd = "rgba(124,92,255,.32)"; }
-
-  const style = {
-    display: "inline-block",
-    padding: "4px 10px",
-    borderRadius: "999px",
-    border: "1px solid " + bd,
-    background: bg,
-    fontWeight: 900,
-    fontFamily:
-      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono','Courier New', monospace",
-  };
-
-  return React.createElement("span", { style }, n.toFixed(2));
-};
-
-// --------------------
 // Symbol-only cell renderer (TradingView link)
 // --------------------
 dagcomponentfuncs.SymbolCell = function (params) {
