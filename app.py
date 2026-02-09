@@ -63,7 +63,7 @@ def init_firebase_admin():
 
     b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64", "").strip()
     raw = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
-    path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "").strip()
+    path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "service.json").strip()
 
     print(
         "Firebase cred env check:",
@@ -235,34 +235,34 @@ if not API_KEY or not ACCESS_TOKEN:
 
 # ------------------- SECTORS -------------------
 SECTOR_DEFINITIONS = {
-    "METAL": ["ADANIENT", "HINDALCO", "JSWSTEEL", "HINDZINC", "APLAPOLLO", "TATASTEEL", "JINDALSTEL", "VEDL", "SAIL", "NATIONALUM", "NMDC"],
-    "PSUS": ["BANKINDIA", "PNB", "INDIANB", "SBIN", "UNIONBANK", "BANKBARODA", "CANBK"],
-    "REALTY": ["PHOENIXLTD", "GODREJPROP", "LODHA", "OBEROIRLTY", "DLF", "PRESTIGE", "NBCC", "NCC"],
-    "ENERGY": ["CGPOWER", "RELIANCE", "GMRAIRPORT", "JSWENERGY", "ONGC", "POWERGRID", "BLUESTARCO", "COALINDIA", "SUZLON", "IREDA",
-               "IOC", "IGL", "TATAPOWER", "INOXWIND", "MAZDOCK", "PETRONET", "SOLARINDS", "ADANIGREEN", "NTPC", "OIL", "BDL", "BPCL",
-               "NHPC", "POWERINDIA", "ADANIENSOL", "TORRENTPOWER"],
-    "AUTO": ["BOSCHLTD", "TIINDIA", "HEROMOTOCO", "M&M", "EICHERMOT", "EXIDEIND", "BAJAJ-AUTO", "ASHOKLEY", "MARUTI", "TITAGARH",
-             "TVSMOTOR", "MOTHERSON", "SONACOMS", "UNOMINDA", "TATAMOTORS", "BHARATFORG"],
-    "IT": ["KAYNES", "TATATECH", "LTIM", "CYIENT", "MPHASIS", "TCS", "CAMS", "OFSS", "HFCL", "TECHM", "TATAELXSI", "HCLTECH", "WIPRO",
-           "KPITTECH", "COFORGE", "PERSISTENT", "INFY"],
-    "PHARMA": ["CIPLA", "ALKEM", "BIOCON", "DRREDDY", "MANKIND", "TORNTPHARM", "ZYDUSLIFE", "DIVISLAB", "LUPIN", "PPLPHARMA",
-               "LAURUSLABS", "FORTIS", "AUROPHARMA", "GLENMARK", "SUNPHARMA"],
-    "FMCG": ["ETERNAL", "MARICO", "NYKAA", "NESTLEIND", "VBL", "COLPAL", "HINDUNILVR", "PATANJALI", "DMART", "DABUR", "GODREJCP",
-             "BRITANNIA", "UNITDSPR", "ITC", "TATACONSUM", "KALYANKJIL", "SUPREMEIND"],
-    "CEMENT": ["SHREECEM", "DALBHARAT", "AMBUJACEM", "ULTRACEMCO"],
-    "FINSERVICE": ["PNBHOUSING", "BAJAJFINSV", "ICICIPRULI", "NUVAMA", "HDFCLIFE", "SAMMAANCAP", "ANGELONE", "RECLTD", "BAJFINANCE",
-                   "BSE", "MAXHEALTH", "ICICIGI", "HUDCO", "CHOLAFIN", "PFC", "HDFCAMC", "MUTHOOTFIN", "PAYTM", "JIOFIN", "SHRIRAMFIN",
-                   "SBICARD", "POLICYBZR", "SBILIFE", "LICHSGFIN", "LICI", "MANAPPURAM", "IRFC", "IIFL", "CDSL"],
-    "BANK": ["IDFCFIRSTB", "FEDERALBNK", "INDUSINDBK", "HDFCBANK", "SBIN", "KOTAKBANK", "AUBANK", "CANBK", "BANDHANBNK", "RBLBANK",
-             "ICICIBANK", "AXISBANK"],
-    "NIFTY_50": ["ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BEL",
-                "BHARTIARTL", "CIPLA", "COALINDIA", "DRREDDY", "EICHERMOT", "GRASIM", "HCLTECH", "HDFCBANK", "HDFCLIFE", "HINDALCO",
-                "HINDUNILVR", "ICICIBANK", "INFY", "INDIGO", "ITC", "JIOFIN", "JSWSTEEL", "KOTAKBANK", "LT", "M&M", "MARUTI", "MAXHEALTH",
-                "NESTLEIND", "NTPC", "ONGC", "POWERGRID", "RELIANCE", "SBILIFE", "SHRIRAMFIN", "SBIN", "SUNPHARMA", "TCS", "TATACONSUM",
-                "TATASTEEL", "TECHM", "TITAN", "TRENT", "ULTRACEMCO", "WIPRO", "TATAMOTORS", "ETERNAL"],
-    "MIDCAP": ["RVNL", "MPHASIS", "HINDPETRO", "PAGEIND", "POLYCAB", "LUPIN", "IDFCFIRSTB", "CONCOR", "CUMMINSIND", "VOLTAS",
-               "BHARATFORG", "FEDERALBNK", "INDHOTEL", "COFORGE", "ASHOKLEY", "PERSISTENT", "UPL", "GODREJPROP", "AUROPHARMA", "AUBANK",
-               "ASTRAL", "HDFCAMC", "JUBLFOOD", "PIIND"],
+    "METAL": ["ADANIENT","HINDALCO","JSWSTEEL","HINDZINC","APLAPOLLO","TATASTEEL","JINDALSTEL","VEDL","SAIL","NATIONALUM","NMDC"],
+    "PSUS": ["BANKINDIA","PNB","INDIANB","SBIN","UNIONBANK","BANKBARODA","CANBK"],
+    "REALTY": ["PHOENIXLTD","GODREJPROP","LODHA","OBEROIRLTY","DLF","PRESTIGE","NBCC","NCC"],
+    "ENERGY": ["CGPOWER","RELIANCE","GMRAIRPORT","JSWENERGY","ONGC","POWERGRID","BLUESTARCO","COALINDIA","SUZLON","IREDA",
+               "IOC","IGL","TATAPOWER","INOXWIND","MAZDOCK","PETRONET","SOLARINDS","ADANIGREEN","NTPC","OIL","BDL","BPCL",
+               "NHPC","POWERINDIA","ADANIENSOL","TORRENTPOWER"],
+    "AUTO": ["BOSCHLTD","TIINDIA","HEROMOTOCO","M&M","EICHERMOT","EXIDEIND","BAJAJ-AUTO","ASHOKLEY","MARUTI","TITAGARH",
+             "TVSMOTOR","MOTHERSON","SONACOMS","UNOMINDA","TATAMOTORS","BHARATFORG"],
+    "IT": ["KAYNES","TATATECH","LTIM","CYIENT","MPHASIS","TCS","CAMS","OFSS","HFCL","TECHM","TATAELXSI","HCLTECH","WIPRO",
+           "KPITTECH","COFORGE","PERSISTENT","INFY"],
+    "PHARMA": ["CIPLA","ALKEM","BIOCON","DRREDDY","MANKIND","TORNTPHARM","ZYDUSLIFE","DIVISLAB","LUPIN","PPLPHARMA",
+               "LAURUSLABS","FORTIS","AUROPHARMA","GLENMARK","SUNPHARMA"],
+    "FMCG": ["ETERNAL","MARICO","NYKAA","NESTLEIND","VBL","COLPAL","HINDUNILVR","PATANJALI","DMART","DABUR","GODREJCP",
+             "BRITANNIA","UNITDSPR","ITC","TATACONSUM","KALYANKJIL","SUPREMEIND"],
+    "CEMENT": ["SHREECEM","DALBHARAT","AMBUJACEM","ULTRACEMCO"],
+    "FINSERVICE": ["PNBHOUSING","BAJAJFINSV","ICICIPRULI","NUVAMA","HDFCLIFE","SAMMAANCAP","ANGELONE","RECLTD","BAJFINANCE",
+                   "BSE","MAXHEALTH","ICICIGI","HUDCO","CHOLAFIN","PFC","HDFCAMC","MUTHOOTFIN","PAYTM","JIOFIN","SHRIRAMFIN",
+                   "SBICARD","POLICYBZR","SBILIFE","LICHSGFIN","LICI","MANAPPURAM","IRFC","IIFL","CDSL"],
+    "BANK": ["IDFCFIRSTB","FEDERALBNK","INDUSINDBK","HDFCBANK","SBIN","KOTAKBANK","AUBANK","CANBK","BANDHANBNK","RBLBANK",
+             "ICICIBANK","AXISBANK"],
+    "NIFTY_50": ["ADANIENT","ADANIPORTS","APOLLOHOSP","ASIANPAINT","AXISBANK","BAJAJ-AUTO","BAJFINANCE","BAJAJFINSV","BEL",
+                "BHARTIARTL","CIPLA","COALINDIA","DRREDDY","EICHERMOT","GRASIM","HCLTECH","HDFCBANK","HDFCLIFE","HINDALCO",
+                "HINDUNILVR","ICICIBANK","INFY","INDIGO","ITC","JIOFIN","JSWSTEEL","KOTAKBANK","LT","M&M","MARUTI","MAXHEALTH",
+                "NESTLEIND","NTPC","ONGC","POWERGRID","RELIANCE","SBILIFE","SHRIRAMFIN","SBIN","SUNPHARMA","TCS","TATACONSUM",
+                "TATASTEEL","TECHM","TITAN","TRENT","ULTRACEMCO","WIPRO","TATAMOTORS","ETERNAL"],
+    "MIDCAP": ["RVNL","MPHASIS","HINDPETRO","PAGEIND","POLYCAB","LUPIN","IDFCFIRSTB","CONCOR","CUMMINSIND","VOLTAS",
+               "BHARATFORG","FEDERALBNK","INDHOTEL","COFORGE","ASHOKLEY","PERSISTENT","UPL","GODREJPROP","AUROPHARMA","AUBANK",
+               "ASTRAL","HDFCAMC","JUBLFOOD","PIIND"],
 }
 ALL_SYMBOLS = sorted(set(sum(SECTOR_DEFINITIONS.values(), [])))
 
@@ -361,7 +361,6 @@ def update_from_tick(tick: dict):
         LAST_OHLC[token] = ohlc
 
     _hot_history_push(token, time.time(), float(ltp), float(cumvol) if cumvol is not None else None)
-
     return ts
 
 
@@ -379,18 +378,11 @@ def compute_20d_daily_stats_for_token(token: int, days_back: int = 140):
     )
     df = pd.DataFrame(candles)
     if df.empty or len(df) < LOOKBACK_SESSIONS + 1:
-        return {
-            "avg_vol_20": None,
-            "avg_range_20": None,
-            "avg_abs_oc_ret_20": None,
-        }
+        return {"avg_vol_20": None, "avg_range_20": None, "avg_abs_oc_ret_20": None}
 
     df = df.tail(LOOKBACK_SESSIONS + 1).copy()
     df["range"] = (df["high"] - df["low"]).astype(float)
-
-    # open-to-close baseline (used for "since open" move normalization)
     df["oc_ret_pct"] = (df["close"] - df["open"]) / df["open"] * 100.0
-
     df = df.dropna().tail(LOOKBACK_SESSIONS)
 
     return {
@@ -434,9 +426,6 @@ def compute_rfactor_row_for_token(token: int):
     RFactor magnitude is based on move SINCE TODAY OPEN:
       pct_open = (LTP - Open)/Open * 100
 
-    But Top tables display "Current%" vs previous close:
-      current_pct = (LTP - PrevClose)/PrevClose * 100
-
     Baseline for move is avg abs(open->close %) over last 20 days.
     """
     ltp = LAST_PRICE.get(token)
@@ -479,8 +468,6 @@ def compute_rfactor_row_for_token(token: int):
     move_factor = abs(pct_open) / (float(avg_abs_oc_ret_20) + eps)
 
     rfactor = rvol * range_factor * move_factor
-
-    # Direction uses since-open sign (keeps "intraday direction" meaning)
     dirr = (1.0 if pct_open >= 0 else -1.0) * rfactor
 
     return {
@@ -492,6 +479,7 @@ def compute_rfactor_row_for_token(token: int):
         "ltp": ltp,
         "prev_close": prev_close,
         "day_open": day_open,
+        "vol_today": vol_today,  # <-- added for tables
     }
 
 
@@ -499,8 +487,6 @@ def _compute_hot_row_for_token(token: int):
     """
     Hot Now = last 15 minutes return + last 15 minutes volume delta.
     Score = abs(ret_15m) * rvol_15m
-
-    rvol_15m compares 15m volume delta to expected 15m volume derived from avg_vol_20.
     """
     dq = HOT_HISTORY.get(token)
     if not dq or len(dq) < 2:
@@ -537,8 +523,7 @@ def _compute_hot_row_for_token(token: int):
 
     rvol15 = None
     if vol15 is not None and avg_vol_20 and float(avg_vol_20) > 0:
-        # 9:15-15:30 => 6h15m = 22500 sec
-        session_sec = 22500.0
+        session_sec = 22500.0  # 9:15-15:30
         expected_15 = float(avg_vol_20) * (HOT_WINDOW_SEC / session_sec)
         rvol15 = float(vol15) / (expected_15 + 1e-9)
 
@@ -546,63 +531,82 @@ def _compute_hot_row_for_token(token: int):
     return {"ret15": ret15, "vol15": vol15, "rvol15": rvol15, "score": score}
 
 
+# ------------------- TABLE ROW BUILDERS (UPDATED to 4 columns) -------------------
 def top_gainers_losers_rfactor_rows(n: int = 15):
     """
-    Top tables:
-      - SHOW: % since OPEN, DirR, Gap%, RFactor
-      - FILTER: % since OPEN > 0 / < 0
-      - SORT: RFactor desc
+    Columns: Symbol | %Change (since open) | RFactor | Vol (today)
+    Sort: RFactor desc
     """
     rows = []
     for sym in ALL_SYMBOLS:
         tok = symbol_to_token.get(sym)
         if not tok:
             continue
+
         rr = compute_rfactor_row_for_token(tok)
         if not rr:
             continue
 
+        vol_today = rr.get("vol_today")
         rows.append({
             "Symbol": sym,
-            "% (Open)": round(float(rr["pct_open"]), 2),  # since open
-            "DirR": round(float(rr["dirr"]), 2),
-            "Gap%": round(float(rr["gap_pct"]), 2),
+            "%Change": round(float(rr["pct_open"]), 2),
             "RFactor": round(float(rr["rfactor"]), 2),
+            "Vol": int(vol_today) if vol_today is not None else None,
         })
 
     if not rows:
         return [], []
 
-    df = pd.DataFrame(rows).dropna(subset=["% (Open)", "RFactor"])
-    gainers = df[df["% (Open)"] > 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
-    losers = df[df["% (Open)"] < 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
+    df = pd.DataFrame(rows).dropna(subset=["%Change", "RFactor"])
+    gainers = df[df["%Change"] > 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
+    losers = df[df["%Change"] < 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
     return gainers, losers
 
 
 def top_hot_now_rows(n: int = 15):
+    """
+    Columns: Symbol | %Change (15m) | RFactor | Vol (15m delta)
+    Sort: HotScore desc (internal)
+    """
     rows = []
     for sym in ALL_SYMBOLS:
         tok = symbol_to_token.get(sym)
         if not tok:
             continue
+
         hr = _compute_hot_row_for_token(tok)
         if not hr:
             continue
 
+        rr = compute_rfactor_row_for_token(tok)
+        rfac = rr["rfactor"] if rr and rr.get("rfactor") is not None else None
+
         rows.append({
             "Symbol": sym,
-            "Ret15m%": round(float(hr["ret15"]), 2),
-            "Vol15m": (int(hr["vol15"]) if hr["vol15"] is not None else None),
-            "RV15m": (round(float(hr["rvol15"]), 2) if hr["rvol15"] is not None else None),
-            "HotScore": round(float(hr["score"]), 2),
+            "%Change": round(float(hr["ret15"]), 2),
+            "RFactor": (round(float(rfac), 2) if rfac is not None else None),
+            "Vol": (int(hr["vol15"]) if hr["vol15"] is not None else None),
+            "_score": float(hr["score"]),
         })
 
     if not rows:
         return [], []
 
-    df = pd.DataFrame(rows).dropna(subset=["Ret15m%", "HotScore"])
-    gainers = df[df["Ret15m%"] > 0].sort_values("HotScore", ascending=False).head(n).to_dict("records")
-    losers = df[df["Ret15m%"] < 0].sort_values("HotScore", ascending=False).head(n).to_dict("records")
+    df = pd.DataFrame(rows).dropna(subset=["%Change", "_score"])
+
+    gainers = (
+        df[df["%Change"] > 0]
+        .sort_values("_score", ascending=False)
+        .head(n)[["Symbol", "%Change", "RFactor", "Vol"]]
+        .to_dict("records")
+    )
+    losers = (
+        df[df["%Change"] < 0]
+        .sort_values("_score", ascending=False)
+        .head(n)[["Symbol", "%Change", "RFactor", "Vol"]]
+        .to_dict("records")
+    )
     return gainers, losers
 
 
@@ -700,7 +704,6 @@ def start_ticker_once():
         kws.on_noreconnect = on_noreconnect
 
         kws.connect(threaded=True)
-
         while True:
             time.sleep(1)
 
@@ -720,9 +723,7 @@ server = dash_app.server
 
 
 def get_user_from_dash_request() -> Optional[dict]:
-    """
-    Dash runs under Flask (WSGI). Read cookie from Flask request headers.
-    """
+    """Dash runs under Flask (WSGI). Read cookie from Flask request headers."""
     try:
         from flask import request as flask_request  # type: ignore
         cookie_hdr = flask_request.headers.get("Cookie", "") or ""
@@ -847,10 +848,7 @@ def top_nav(uname: str, plan_text: str):
         return dbc.NavItem(html.Div(text, className=cls, style=style))
 
     return dbc.Nav(
-        [
-            pill(uname, "user"),
-            pill(plan_text, "plan"),
-        ],
+        [pill(uname, "user"), pill(plan_text, "plan")],
         pills=True,
         className="top-tabs",
     )
@@ -865,35 +863,32 @@ def locked_page():
 
 
 def sectors_page():
-    rfactor_cols = [
-        {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "SymbolCell", "minWidth": 120},
-        {"field": "% (Open)", "type": "rightAligned",
-         "valueFormatter": {"function": "fmtPct(params.value)"},
-         "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-        {"field": "DirR", "type": "rightAligned",
-         "valueFormatter": {"function": "fmtSigned2(params.value)"},
-         "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-        {"field": "Gap%", "type": "rightAligned",
-         "valueFormatter": {"function": "fmtPct(params.value)"},
-         "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-        {"field": "RFactor", "type": "rightAligned",
-         "valueFormatter": {"function": "fmt2(params.value)"}},
-    ]
+    # ---- 4 columns only (no horizontal scroll) ----
+    four_cols = [
+        {"field": "Symbol", "headerName": "Stock", "cellRenderer": "SymbolCell",
+         "minWidth": 110, "flex": 1},
 
-    hot_cols = [
-        {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "SymbolCell", "minWidth": 120},
-        {"field": "Ret15m%", "type": "rightAligned",
+        {"field": "%Change", "headerName": "%Change", "type": "rightAligned",
          "valueFormatter": {"function": "fmtPct(params.value)"},
-         "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-        {"field": "Vol15m", "type": "rightAligned", "valueFormatter": {"function": "fmtInt(params.value)"}},
-        {"field": "RV15m", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}},
-        {"field": "HotScore", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}},
+         "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
+         "minWidth": 90, "flex": 1},
+
+        {"field": "RFactor", "headerName": "RFactor", "type": "rightAligned",
+         "valueFormatter": {"function": "fmt2(params.value)"},
+         "minWidth": 90, "flex": 1},
+
+        {"field": "Vol", "headerName": "Vol", "type": "rightAligned",
+         "valueFormatter": {"function": "fmtInt(params.value)"},
+         "minWidth": 90, "flex": 1},
     ]
 
     grid_opts = {
         "getRowId": {"function": "params.data.Symbol"},
         "alwaysShowVerticalScroll": True,
         "animateRows": True,
+        # fit columns to grid width (prevents horizontal scroll)
+        "onGridReady": {"function": "params.api.sizeColumnsToFit();"},
+        "onGridSizeChanged": {"function": "params.api.sizeColumnsToFit();"},
     }
 
     return html.Div(
@@ -914,9 +909,9 @@ def sectors_page():
                             dag.AgGrid(
                                 id="top15-gainers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=rfactor_cols,
+                                columnDefs=four_cols,
                                 rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
+                                defaultColDef={"sortable": True, "filter": True, "resizable": True, "minWidth": 80},
                                 dashGridOptions=grid_opts,
                                 style={"height": "min(520px, 48vh)", "width": "100%"},
                             ),
@@ -929,9 +924,9 @@ def sectors_page():
                             dag.AgGrid(
                                 id="top15-losers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=rfactor_cols,
+                                columnDefs=four_cols,
                                 rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
+                                defaultColDef={"sortable": True, "filter": True, "resizable": True, "minWidth": 80},
                                 dashGridOptions=grid_opts,
                                 style={"height": "min(520px, 48vh)", "width": "100%"},
                             ),
@@ -952,9 +947,9 @@ def sectors_page():
                             dag.AgGrid(
                                 id="hot15-gainers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=hot_cols,
+                                columnDefs=four_cols,
                                 rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
+                                defaultColDef={"sortable": True, "filter": True, "resizable": True, "minWidth": 80},
                                 dashGridOptions=grid_opts,
                                 style={"height": "min(520px, 48vh)", "width": "100%"},
                             ),
@@ -967,9 +962,9 @@ def sectors_page():
                             dag.AgGrid(
                                 id="hot15-losers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=hot_cols,
+                                columnDefs=four_cols,
                                 rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
+                                defaultColDef={"sortable": True, "filter": True, "resizable": True, "minWidth": 80},
                                 dashGridOptions=grid_opts,
                                 style={"height": "min(520px, 48vh)", "width": "100%"},
                             ),
