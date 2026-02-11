@@ -1,6 +1,6 @@
 # app.py  (NO AUTH • NO FIREBASE • NO SUBSCRIPTIONS)
 #
-# Open dashboard at: http://127.0.0.1:8000/dash/
+# Dashboard: http://127.0.0.1:8000/dash/
 #
 # Required env:
 #   KITE_API_KEY
@@ -15,10 +15,9 @@ import threading
 import logging
 from collections import deque
 from datetime import datetime, timedelta, time as dtime
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from urllib.parse import unquote
 from zoneinfo import ZoneInfo
-from math import isfinite
 from pathlib import Path
 
 import pandas as pd
@@ -59,6 +58,17 @@ LOOKBACK_SESSIONS = 20
 HOT_WINDOW_SEC = 15 * 60
 HOT_SAMPLE_SEC = 5
 HOT_HISTORY_MAX_SEC = HOT_WINDOW_SEC + 5 * 60
+
+# High Vol + High RFactor tables tuning
+HVHR_N = int(os.getenv("HVHR_N", "20"))
+HVHR_RFACTOR_Q = float(os.getenv("HVHR_RFACTOR_Q", "0.85"))  # top 15% bucket
+
+# REAL NIFTY OI PCR tuning
+PCR_STRIKES_AROUND_ATM = int(os.getenv("PCR_STRIKES_AROUND_ATM", "12"))  # +/- strikes around ATM
+PCR_CACHE_TTL_SEC = int(os.getenv("PCR_CACHE_TTL_SEC", "20"))
+PCR_QUOTE_CHUNK = int(os.getenv("PCR_QUOTE_CHUNK", "180"))
+
+NIFTY_SPOT_SYMBOL = os.getenv("NIFTY_SPOT_SYMBOL", "NSE:NIFTY 50")  # used for ATM selection
 
 
 # =============================================================================
@@ -103,7 +113,7 @@ SECTOR_DEFINITIONS = {
 }
 ALL_SYMBOLS = sorted(set(sum(SECTOR_DEFINITIONS.values(), [])))
 
-# Instruments
+# NSE equity instruments
 ins = pd.DataFrame(kite.instruments("NSE"))
 ins = ins[ins["tradingsymbol"].isin(ALL_SYMBOLS)].copy()
 symbol_to_token: Dict[str, int] = dict(zip(ins["tradingsymbol"], ins["instrument_token"]))
@@ -124,8 +134,7 @@ def market_is_open_ist(now: Optional[datetime] = None) -> bool:
     return dtime(9, 15) <= t <= dtime(15, 30)
 
 
-EOD_SNAPSHOT: Dict[int, Dict[str, Any]] = {}
-# token -> {date, open, high, low, close, volume, prev_close}
+EOD_SNAPSHOT: Dict[int, Dict[str, Any]] = {}  # token -> eod dict
 
 
 # =============================================================================
@@ -235,7 +244,6 @@ def compute_20d_daily_stats_and_eod(token: int, days_back: int = 220) -> Dict[st
     df["d"] = df["date"].dt.date
     today_ist = datetime.now(IST).date()
 
-    # During market, today's daily candle can be partial -> use previous completed day
     if market_is_open_ist() and df.iloc[-1]["d"] == today_ist:
         df = df.iloc[:-1].copy()
 
@@ -304,15 +312,6 @@ def seed_daily_stats_once(per_req_sleep: float = SEED_SLEEP_SEC):
 
 
 def get_live_or_eod_state(token: int) -> Optional[Tuple[float, float, dict]]:
-    """
-    Returns (ltp, vol_today, ohlc_dict):
-      - live ticks if present
-      - else EOD snapshot (last completed day)
-    For EOD:
-      ltp = close
-      vol_today = volume
-      ohlc.close = prev_close (for gap calc)
-    """
     ltp = LAST_PRICE.get(token)
     vol_today = DAY_VOL.get(token)
     ohlc = LAST_OHLC.get(token) or {}
@@ -334,7 +333,151 @@ def get_live_or_eod_state(token: int) -> Optional[Tuple[float, float, dict]]:
 
 
 # =============================================================================
-# METRICS
+# REAL NIFTY OI PCR — NFO OPTIONS
+# =============================================================================
+NFO_INS_DF: Optional[pd.DataFrame] = None
+NFO_LOAD_STARTED = False
+NFO_LOAD_ERR: Optional[str] = None
+
+PCR_CACHE: Dict[str, Tuple[dict, float]] = {}  # key -> (data, exp_epoch)
+
+
+def load_nfo_instruments_once():
+    global NFO_LOAD_STARTED
+    if NFO_LOAD_STARTED:
+        return
+    NFO_LOAD_STARTED = True
+
+    def _run():
+        global NFO_INS_DF, NFO_LOAD_ERR
+        try:
+            df = pd.DataFrame(kite.instruments("NFO"))
+            df = df[df["instrument_type"].isin(["CE", "PE"])].copy()
+            df = df[df["name"] == "NIFTY"].copy()
+            df["expiry"] = pd.to_datetime(df["expiry"]).dt.date
+            NFO_INS_DF = df
+            log.info("Loaded NFO instruments (NIFTY only): %s rows", len(df))
+        except Exception as e:
+            NFO_LOAD_ERR = repr(e)
+            log.exception("Failed to load NFO instruments")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _chunk(lst: List[str], n: int):
+    for i in range(0, len(lst), n):
+        yield lst[i : i + n]
+
+
+def _quote_many(keys: List[str], chunk_size: int = PCR_QUOTE_CHUNK) -> dict:
+    out = {}
+    for ch in _chunk(keys, chunk_size):
+        out.update(kite.quote(ch))
+    return out
+
+
+def _infer_strike_step(strikes: pd.Series) -> float:
+    s = sorted(set(float(x) for x in strikes.dropna().tolist()))
+    if len(s) < 3:
+        return 50.0
+    diffs = [b - a for a, b in zip(s, s[1:]) if (b - a) > 0]
+    if not diffs:
+        return 50.0
+    diffs.sort()
+    return float(diffs[len(diffs) // 2])
+
+
+def compute_real_nifty_oi_pcr(strikes_around_atm: int = PCR_STRIKES_AROUND_ATM) -> Optional[dict]:
+    """
+    REAL NIFTY OI PCR:
+      PCR = Sum(PE OI) / Sum(CE OI) for nearest expiry within ATM +/- strikes range.
+    """
+    cache_key = f"NIFTY:oi:{strikes_around_atm}"
+    cached = PCR_CACHE.get(cache_key)
+    if cached and cached[1] > time.time():
+        return cached[0]
+
+    if NFO_LOAD_ERR or NFO_INS_DF is None:
+        return None
+
+    # Spot
+    try:
+        spot = float(kite.ltp([NIFTY_SPOT_SYMBOL])[NIFTY_SPOT_SYMBOL]["last_price"])
+    except Exception:
+        return None
+
+    dfu = NFO_INS_DF
+    if dfu.empty:
+        return None
+
+    expiry = min(dfu["expiry"].tolist()) if len(dfu) else None
+    if not expiry:
+        return None
+
+    dfe = dfu[dfu["expiry"] == expiry].copy()
+    if dfe.empty:
+        return None
+
+    step = _infer_strike_step(dfe["strike"])
+    atm = round(spot / step) * step
+
+    lo = atm - strikes_around_atm * step
+    hi = atm + strikes_around_atm * step
+    dfe = dfe[(dfe["strike"] >= lo) & (dfe["strike"] <= hi)].copy()
+    if dfe.empty:
+        return None
+
+    ce = dfe[dfe["instrument_type"] == "CE"]
+    pe = dfe[dfe["instrument_type"] == "PE"]
+
+    ce_keys = ["NFO:" + s for s in ce["tradingsymbol"].tolist()]
+    pe_keys = ["NFO:" + s for s in pe["tradingsymbol"].tolist()]
+    keys = ce_keys + pe_keys
+    if not keys:
+        return None
+
+    try:
+        q = _quote_many(keys, chunk_size=PCR_QUOTE_CHUNK)
+    except Exception:
+        return None
+
+    ce_oi = sum(float(q.get(k, {}).get("oi") or 0.0) for k in ce_keys)
+    pe_oi = sum(float(q.get(k, {}).get("oi") or 0.0) for k in pe_keys)
+
+    pcr = pe_oi / (ce_oi + 1e-9)
+
+    data = {
+        "underlying": "NIFTY",
+        "expiry": str(expiry),
+        "spot": spot,
+        "atm": atm,
+        "step": step,
+        "range": [float(lo), float(hi)],
+        "ce_oi": float(ce_oi),
+        "pe_oi": float(pe_oi),
+        "pcr": float(pcr),
+        "strikes": int(len(dfe)),
+        "updated_at": datetime.now(IST).strftime("%H:%M:%S"),
+    }
+
+    PCR_CACHE[cache_key] = (data, time.time() + PCR_CACHE_TTL_SEC)
+    return data
+
+
+def pcr_label_from_value(pcr: float) -> str:
+    if pcr >= 1.40:
+        return "STRONG BUY"
+    if pcr >= 1.10:
+        return "BUY"
+    if pcr >= 0.90:
+        return "NEUTRAL"
+    if pcr >= 0.60:
+        return "SELL"
+    return "STRONG SELL"
+
+
+# =============================================================================
+# METRICS / TABLE BUILDERS
 # =============================================================================
 def compute_rfactor_row_for_token(token: int):
     state = get_live_or_eod_state(token)
@@ -428,9 +571,6 @@ def _compute_hot_row_for_token(token: int):
     return {"ret15": ret15, "vol15": vol15, "score": score}
 
 
-# =============================================================================
-# TABLE BUILDERS
-# =============================================================================
 def top_gainers_losers_rfactor_rows(n: int = 15):
     rows = []
     for sym in ALL_SYMBOLS:
@@ -453,6 +593,48 @@ def top_gainers_losers_rfactor_rows(n: int = 15):
     df = pd.DataFrame(rows)
     gainers = df[df["%Change"] > 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
     losers = df[df["%Change"] < 0].sort_values("RFactor", ascending=False).head(n).to_dict("records")
+    return gainers, losers
+
+
+def high_vol_high_rfactor_gainers_losers(n: int = HVHR_N, rfactor_quantile: float = HVHR_RFACTOR_Q):
+    rows = []
+    for sym in ALL_SYMBOLS:
+        tok = symbol_to_token.get(sym)
+        if not tok:
+            continue
+        rr = compute_rfactor_row_for_token(tok)
+        if not rr:
+            continue
+        rows.append({
+            "Symbol": sym,
+            "%Change": round(float(rr["pct_open"]), 2),
+            "RFactor": round(float(rr["rfactor"]), 2),
+            "Vol": int(rr["vol_today"]),
+        })
+
+    if not rows:
+        return [], []
+
+    df = pd.DataFrame(rows).dropna(subset=["RFactor", "Vol", "%Change"])
+    if df.empty:
+        return [], []
+
+    q = min(max(float(rfactor_quantile), 0.0), 1.0)
+    thr = float(df["RFactor"].quantile(q)) if len(df) >= 3 else float(df["RFactor"].min())
+    df = df[df["RFactor"] >= thr]
+
+    gainers = (
+        df[df["%Change"] > 0]
+        .sort_values(["Vol", "RFactor"], ascending=[False, False])
+        .head(int(n))
+        .to_dict("records")
+    )
+    losers = (
+        df[df["%Change"] < 0]
+        .sort_values(["Vol", "RFactor"], ascending=[False, False])
+        .head(int(n))
+        .to_dict("records")
+    )
     return gainers, losers
 
 
@@ -543,18 +725,16 @@ def sector_rows_sorted_by_rfactor(sector: str):
 
 
 # =============================================================================
-# DIALS — SENTIMENT + PCR (proxy)
+# SENTIMENT (breadth proxy)
 # =============================================================================
-def compute_market_sentiment_and_pcr_proxy():
+def compute_market_sentiment_proxy():
     adv = dec = unch = 0
-    up_vol = 0.0
-    down_vol = 0.0
 
     for tok in TOKENS:
         state = get_live_or_eod_state(tok)
         if not state:
             continue
-        ltp, vol, ohlc = state
+        ltp, _, ohlc = state
         op = ohlc.get("open")
         if op is None:
             continue
@@ -562,7 +742,6 @@ def compute_market_sentiment_and_pcr_proxy():
         try:
             opf = float(op)
             ltp = float(ltp)
-            volf = float(vol) if vol is not None else 0.0
         except Exception:
             continue
 
@@ -570,13 +749,10 @@ def compute_market_sentiment_and_pcr_proxy():
             continue
 
         pct_open = (ltp - opf) / opf * 100.0
-
         if pct_open > 0:
             adv += 1
-            up_vol += volf
         elif pct_open < 0:
             dec += 1
-            down_vol += volf
         else:
             unch += 1
 
@@ -590,28 +766,7 @@ def compute_market_sentiment_and_pcr_proxy():
     else:
         label = "NEUTRAL"
 
-    eps = 1e-9
-    pcr = (up_vol / (down_vol + eps)) if (up_vol > 0 or down_vol > 0) else 1.0
-    if not isfinite(pcr) or pcr < 0:
-        pcr = 1.0
-
-    if pcr >= 1.40:
-        pcr_label = "STRONG BUY"
-    elif pcr >= 1.10:
-        pcr_label = "BUY"
-    elif pcr >= 0.90:
-        pcr_label = "NEUTRAL"
-    elif pcr >= 0.60:
-        pcr_label = "SELL"
-    else:
-        pcr_label = "STRONG SELL"
-
-    return {
-        "adv": adv, "dec": dec, "unch": unch, "total": total,
-        "score": float(score), "label": label,
-        "up_vol": float(up_vol), "down_vol": float(down_vol),
-        "pcr": float(pcr), "pcr_label": pcr_label,
-    }
+    return {"adv": adv, "dec": dec, "unch": unch, "total": total, "score": float(score), "label": label}
 
 
 # =============================================================================
@@ -648,18 +803,10 @@ def start_ticker_once():
                     except Exception:
                         log.exception("on_ticks crashed")
 
-                def on_close(ws, code, reason):
-                    log.warning("WS CLOSED: %s %s", code, reason)
-
-                def on_error(ws, code, reason):
-                    log.error("WS ERROR: %s %s", code, reason)
-
                 kws.on_connect = on_connect
                 kws.on_ticks = on_ticks
-                kws.on_close = on_close
-                kws.on_error = on_error
-
                 kws.connect(threaded=True)
+
                 while True:
                     time.sleep(2)
 
@@ -671,27 +818,26 @@ def start_ticker_once():
 
 
 # =============================================================================
-# DASH APP (mounted at /dash)
+# DASH APP
 # =============================================================================
 dash_app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.CYBORG],
-    requests_pathname_prefix=BASE,  # browser hits /dash/_dash-*
-    routes_pathname_prefix="/",     # mount strips /dash
+    requests_pathname_prefix=BASE,
+    routes_pathname_prefix="/",
     assets_folder=os.path.join(os.path.dirname(__file__), "assets"),
     suppress_callback_exceptions=True,
 )
 server = dash_app.server
 
 
-# ------------------- UI Components -------------------
 def dial_component(prefix: str, title: str):
     return html.Div(
         html.Div(
             [
                 html.Div(
                     [
-                        html.Div([html.Div(className="dial-arc")], className="dial-arc-clip"),
+                        html.Div([html.Div(className=f"dial-arc dial-arc-{prefix}")], className="dial-arc-clip"),
                         html.Div(id=f"{prefix}-needle", className="dial-needle", style={"--rot": "0deg"}),
                         html.Div(className="dial-center"),
                         html.Div(["STRONG", html.Br(), "SELL"], className="dial-label dial-ss"),
@@ -705,34 +851,44 @@ def dial_component(prefix: str, title: str):
                 html.Div(title, className="dial-title"),
                 html.Div("—", id=f"{prefix}-sub", className="dial-sub"),
             ],
-            className="dial-card",
+            className=f"dial-card dial-{prefix}",
         )
     )
 
 
 def sectors_page():
     four_cols = [
-        {"field": "Symbol", "headerName": "Stock", "cellRenderer": "SymbolCell", "minWidth": 130, "flex": 1},
-        {"field": "%Change", "headerName": "%Chg", "type": "rightAligned", "minWidth": 95, "flex": 1, "cellClass": "cell-num", "cellRenderer": "PctPill"},
-        {"field": "RFactor", "headerName": "RFactor", "type": "rightAligned", "minWidth": 95, "flex": 1, "cellClass": "cell-num", "cellRenderer": "RfactorPill"},
-        {"field": "Vol", "headerName": "Vol", "type": "rightAligned", "minWidth": 110, "flex": 1, "cellClass": "cell-num", "cellRenderer": "VolPill"},
+        {"colId": "stock", "field": "Symbol", "headerName": "STOCK", "cellRenderer": "SymbolCell", "minWidth": 130, "flex": 1},
+        {"colId": "pctChg", "field": "%Change", "headerName": "%CHG", "type": "rightAligned", "minWidth": 100, "flex": 1,
+         "cellClass": "cell-num", "cellRenderer": "PctPill"},
+        {"colId": "rfactor", "field": "RFactor", "headerName": "RFACTOR", "type": "rightAligned", "minWidth": 110, "flex": 1,
+         "cellClass": "cell-num", "cellRenderer": "RfactorPill"},
+        {"colId": "volume", "field": "Vol", "headerName": "VOLUME", "type": "rightAligned", "minWidth": 120, "flex": 1,
+         "cellClass": "cell-num", "cellRenderer": "VolPill"},
     ]
 
     grid_opts = {
         "getRowId": {"function": "params.data.Symbol"},
         "alwaysShowVerticalScroll": True,
         "animateRows": True,
+        "suppressMenuHide": True,
+        "suppressHeaderMenuButton": False,
+        "suppressHeaderFilterButton": False,
         "onGridReady": {"function": "params.api.sizeColumnsToFit();"},
         "onGridSizeChanged": {"function": "params.api.sizeColumnsToFit();"},
     }
+
+    top_bucket_pct = int((1.0 - float(HVHR_RFACTOR_Q)) * 100)
 
     return html.Div(
         [
             dcc.Interval(id="refresh_sectors", interval=2000, n_intervals=0),
 
             dbc.Row(
-                [dbc.Col(dial_component("sentiment", "Sentimental Dial"), md=6),
-                 dbc.Col(dial_component("pcr", "PCR"), md=6)],
+                [
+                    dbc.Col(dial_component("sentiment", "Sentiment Dial"), md=6),
+                    dbc.Col(dial_component("pcr", "NIFTY OI PCR"), md=6),
+                ],
                 className="g-2 dials-row",
             ),
 
@@ -779,6 +935,50 @@ def sectors_page():
             html.H4("Sectors", className="page-title"),
             html.Div(id="sector-bars", className="sector-bars-wrap"),
             html.Div("Sectors sorted by AVG DirR (strength). Top tables sorted by RFactor.", className="hint"),
+
+            html.Hr(),
+
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            html.H6(
+                                f"High Vol + High RFactor — Gainers (Top {top_bucket_pct}% RFactor bucket, sorted by Vol)",
+                                className="mt-1",
+                            ),
+                            dag.AgGrid(
+                                id="hvhr-gainers-grid",
+                                className="ag-theme-alpine-dark grid-wrap compact-grid",
+                                columnDefs=four_cols,
+                                rowData=[],
+                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
+                                dashGridOptions=grid_opts,
+                                style={"height": "min(520px, 44vh)", "width": "100%"},
+                            ),
+                        ],
+                        md=6,
+                    ),
+                    dbc.Col(
+                        [
+                            html.H6(
+                                f"High Vol + High RFactor — Losers (Top {top_bucket_pct}% RFactor bucket, sorted by Vol)",
+                                className="mt-1",
+                            ),
+                            dag.AgGrid(
+                                id="hvhr-losers-grid",
+                                className="ag-theme-alpine-dark grid-wrap compact-grid",
+                                columnDefs=four_cols,
+                                rowData=[],
+                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
+                                dashGridOptions=grid_opts,
+                                style={"height": "min(520px, 44vh)", "width": "100%"},
+                            ),
+                        ],
+                        md=6,
+                    ),
+                ],
+                className="g-2",
+            ),
 
             html.Hr(),
 
@@ -837,21 +1037,32 @@ def sector_page(sector: str):
                 id="grid",
                 className="ag-theme-alpine-dark grid-wrap",
                 columnDefs=[
-                    {"field": "Symbol", "headerName": "Stock", "pinned": "left", "cellRenderer": "StockCell", "minWidth": 200},
-                    {"field": "Price", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}},
-                    {"field": "Chg (O)", "type": "rightAligned", "valueFormatter": {"function": "fmtSigned2(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-                    {"field": "Gap%", "type": "rightAligned", "valueFormatter": {"function": "fmtPct(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-                    {"field": "Chg% (O)", "type": "rightAligned", "valueFormatter": {"function": "fmtPct(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
-                    {"field": "RFactor", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}, "sort": "desc"},
-                    {"field": "DirR", "type": "rightAligned", "valueFormatter": {"function": "fmtSigned2(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"}},
+                    {"colId": "stock", "field": "Symbol", "headerName": "STOCK", "pinned": "left", "cellRenderer": "StockCell", "minWidth": 220},
+                    {"colId": "price", "field": "Price", "headerName": "PRICE", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}},
+                    {"colId": "chgO", "field": "Chg (O)", "headerName": "CHG (O)", "type": "rightAligned",
+                     "valueFormatter": {"function": "fmtSigned2(params.value)"},
+                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"}},
+                    {"colId": "gapPct", "field": "Gap%", "headerName": "GAP%", "type": "rightAligned",
+                     "valueFormatter": {"function": "fmtPct(params.value)"},
+                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"}},
+                    {"colId": "chgPctO", "field": "Chg% (O)", "headerName": "CHG% (O)", "type": "rightAligned",
+                     "valueFormatter": {"function": "fmtPct(params.value)"},
+                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"}},
+                    {"colId": "rfactor", "field": "RFactor", "headerName": "RFACTOR", "type": "rightAligned",
+                     "valueFormatter": {"function": "fmt2(params.value)"}, "sort": "desc"},
+                    {"colId": "dirr", "field": "DirR", "headerName": "DIR R", "type": "rightAligned",
+                     "valueFormatter": {"function": "fmtSigned2(params.value)"},
+                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"}},
                 ],
                 rowData=[],
                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                dashGridOptions={"alwaysShowVerticalScroll": True, "animateRows": True},
+                dashGridOptions={
+                    "alwaysShowVerticalScroll": True,
+                    "animateRows": True,
+                    "suppressMenuHide": True,
+                    "suppressHeaderMenuButton": False,
+                    "suppressHeaderFilterButton": False,
+                },
                 style={"height": "72vh", "width": "100%"},
             ),
         ],
@@ -859,13 +1070,11 @@ def sector_page(sector: str):
     )
 
 
-# ------------------- Dash Layout -------------------
 dash_app.layout = dbc.Container(
     fluid=True,
     children=[
         dcc.Location(id="url"),
         dcc.Interval(id="top_refresh", interval=1000, n_intervals=0),
-
         html.Div(
             dbc.Row(
                 [
@@ -876,17 +1085,14 @@ dash_app.layout = dbc.Container(
             ),
             className="topbar-wrap",
         ),
-
         html.Div(id="app-body"),
     ],
 )
 
 
-# ------------------- Dash Routing -------------------
 @dash_app.callback(Output("app-body", "children"), Input("url", "pathname"))
 def route(pathname):
     pn = (pathname or "").strip() or "/"
-
     if pn in ("/", "/dash", "/dash/", BASE):
         return sectors_page()
 
@@ -897,7 +1103,6 @@ def route(pathname):
     return sectors_page()
 
 
-# ------------------- TOP HEADER STATS (ONLY PLACE SEEDING IS SHOWN) -------------------
 @dash_app.callback(Output("top-stats", "children"), Input("top_refresh", "n_intervals"))
 def update_top_stats(_):
     updated_str = datetime.now(IST).strftime("%H:%M:%S")
@@ -912,32 +1117,20 @@ def update_top_stats(_):
         d_total = DAILY_SEED_PROGRESS.get("total", 0)
         d_err = DAILY_SEED_ERRORS
 
-        eod_date = None
-        if EOD_SNAPSHOT:
-            any_tok = next(iter(EOD_SNAPSHOT.keys()))
-            eod_date = EOD_SNAPSHOT[any_tok].get("date")
-
     chips = [
         dbc.Badge("Offline" if offline else "Live", color=("danger" if offline else "success"), className="stat-badge"),
     ]
-
-    # Show seeding ONLY here, beside Live/Offline
     if not d_done:
         chips.append(dbc.Badge(f"Seeding {d_done_n}/{d_total} (err {d_err})", color="warning", className="stat-badge"))
 
     chips += [
         html.Div(f"TPS {tps:.1f}", className="stat-chip"),
         html.Div(f"Ticks {tot:,}", className="stat-chip"),
+        html.Div(f"Updated {updated_str}", className="stat-chip"),
     ]
-
-    if eod_date:
-        chips.append(html.Div(f"EOD {eod_date}", className="stat-chip"))
-
-    chips.append(html.Div(f"Updated {updated_str}", className="stat-chip"))
     return html.Div(chips, className="top-stats-wrap")
 
 
-# ------------------- Sector Bars -------------------
 @dash_app.callback(Output("sector-bars", "children"), Input("refresh_sectors", "n_intervals"))
 def render_sector_bars(_):
     with LOCK:
@@ -970,7 +1163,47 @@ def render_sector_bars(_):
     return children
 
 
-# ------------------- DIALS (Exact sentiment + PCR proxy mapping) -------------------
+# =============================================================================
+# DIAL SUBTITLE helpers (state badge + compact OI)
+# =============================================================================
+def _state_class(label: str) -> str:
+    L = (label or "").upper().strip()
+    L = " ".join(L.split())
+
+    if L == "STRONG SELL":
+        return "state-ss"
+    if L == "SELL":
+        return "state-sell"
+    if L == "NEUTRAL":
+        return "state-neutral"
+    if L == "BUY":
+        return "state-buy"
+    if L == "STRONG BUY":
+        return "state-sb"
+
+    # Sentiment words (if ever used)
+    if L == "BEARISH":
+        return "state-sell"
+    if L == "BULLISH":
+        return "state-buy"
+
+    return "state-neutral"
+
+
+def _fmt_oi_compact(v: Optional[float]) -> str:
+    if v is None:
+        return "—"
+    n = float(v)
+    a = abs(n)
+    if a >= 1e7:
+        return f"{n/1e7:.2f}Cr"
+    if a >= 1e5:
+        return f"{n/1e5:.2f}L"
+    if a >= 1e3:
+        return f"{n/1e3:.2f}K"
+    return str(int(round(n)))
+
+
 @dash_app.callback(
     Output("sentiment-needle", "style"),
     Output("sentiment-sub", "children"),
@@ -979,26 +1212,75 @@ def render_sector_bars(_):
     Input("refresh_sectors", "n_intervals"),
 )
 def update_dials(_):
+    # -------------------------
+    # Sentiment
+    # -------------------------
     with LOCK:
-        m = compute_market_sentiment_and_pcr_proxy()
+        sm = compute_market_sentiment_proxy()
 
-    # Sentiment: score [-1..+1] -> angle [-90..+90]
-    score = float(m["score"])
+    score = float(sm["score"])
     sent_angle = max(-90.0, min(90.0, score * 90.0))
     sent_style = {"--rot": f"{sent_angle:.2f}deg"}
-    sent_sub = f'{m["label"]} • {score:+.2f} • {m["adv"]}/{m["dec"]}'
 
-    # PCR proxy: clamp [0..2], map 0->-90, 1->0, 2->+90
-    pcr = float(m["pcr"])
-    pcr_clamped = max(0.0, min(2.0, pcr))
-    pcr_angle = (pcr_clamped - 1.0) * 90.0
-    pcr_style = {"--rot": f"{pcr_angle:.2f}deg"}
-    pcr_sub = f'{m["pcr_label"]} • {pcr:.2f}'
+    sent_label = str(sm["label"])
+    sent_sub = html.Span(
+        [
+            html.Span(sent_label, className=f"dial-state {_state_class(sent_label)}"),
+            html.Span(
+                f"{score:+.2f} • {sm['adv']} ↑ • {sm['dec']} ↓",
+                className="dial-meta",
+            ),
+        ],
+        className="dial-sub-inner",
+    )
+
+    # -------------------------
+    # NIFTY OI PCR
+    # -------------------------
+    pn = compute_real_nifty_oi_pcr(strikes_around_atm=PCR_STRIKES_AROUND_ATM)
+
+    if pn and pn.get("pcr") is not None:
+        pcr = float(pn["pcr"])
+        label = pcr_label_from_value(pcr)
+
+        pcr_clamped = max(0.0, min(2.0, pcr))
+        pcr_angle = (pcr_clamped - 1.0) * 90.0
+        pcr_style = {"--rot": f"{pcr_angle:.2f}deg"}
+
+        pe_oi = pn.get("pe_oi")
+        ce_oi = pn.get("ce_oi")
+        pe_txt = _fmt_oi_compact(pe_oi)
+        ce_txt = _fmt_oi_compact(ce_oi)
+
+        # Clean: no Exp/ATM; includes PE/CE OI
+        pcr_sub = html.Span(
+            [
+                html.Span(label, className=f"dial-state {_state_class(label)}"),
+                html.Span(
+                    f"NIFTY OI PCR {pcr:.2f} • PE {pe_txt} • CE {ce_txt}",
+                    className="dial-meta",
+                    title=(
+                        f"PE OI {float(pe_oi):,.0f} / CE OI {float(ce_oi):,.0f}"
+                        if (pe_oi is not None and ce_oi is not None)
+                        else None
+                    ),
+                ),
+            ],
+            className="dial-sub-inner",
+        )
+    else:
+        pcr_style = {"--rot": "0deg"}
+        pcr_sub = html.Span(
+            [
+                html.Span("LOADING", className="dial-state state-neutral"),
+                html.Span("NIFTY OI PCR", className="dial-meta"),
+            ],
+            className="dial-sub-inner",
+        )
 
     return sent_style, sent_sub, pcr_style, pcr_sub
 
 
-# ------------------- Grids -------------------
 @dash_app.callback(
     Output("top15-gainers-grid", "rowData"),
     Output("top15-losers-grid", "rowData"),
@@ -1007,6 +1289,16 @@ def update_dials(_):
 def update_rfactor_leaderboards(_):
     with LOCK:
         return top_gainers_losers_rfactor_rows(n=15)
+
+
+@dash_app.callback(
+    Output("hvhr-gainers-grid", "rowData"),
+    Output("hvhr-losers-grid", "rowData"),
+    Input("refresh_sectors", "n_intervals"),
+)
+def update_hvhr(_):
+    with LOCK:
+        return high_vol_high_rfactor_gainers_losers(n=HVHR_N, rfactor_quantile=HVHR_RFACTOR_Q)
 
 
 @dash_app.callback(
@@ -1050,6 +1342,7 @@ THEME_PATH = HERE / "assets" / "theme.css"
 def _startup():
     seed_daily_stats_once(per_req_sleep=SEED_SLEEP_SEC)
     start_ticker_once()
+    load_nfo_instruments_once()
 
 
 @app.get("/dash")
@@ -1070,6 +1363,8 @@ def health():
             "last_tick_time": (LAST_TICK_DT.isoformat() if LAST_TICK_DT else None),
             "hot_history_tokens": len(HOT_HISTORY),
             "eod_tokens": len(EOD_SNAPSHOT),
+            "nfo_loaded": bool(NFO_INS_DF is not None),
+            "nfo_error": NFO_LOAD_ERR,
         }
 
 
