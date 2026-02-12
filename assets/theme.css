@@ -1,51 +1,60 @@
 /* ==========================================================================
    TurboTrades — ULTRA PREMIUM (MONOCHROME / PILL-LESS) + GREEN/RED %CHANGE
-   CLEAN / FULL
+   CLEAN / FULL — DARK (ONYX) EDITION + PRECISION ALIGNMENT
+   + JEWEL TONE DIALS (EMERALD / RUBY / SAPPHIRE)
 ========================================================================== */
 
 /* ----------------------------
    TOKENS
 ---------------------------- */
 :root{
-  --bg0: #060812;
-  --bg1: #0B1222;
+  /* Neutral Dark Backgrounds (Onyx/Black) */
+  --bg0: #020202;
+  --bg1: #0a0a0a;
 
-  --panel0: rgba(255,255,255,0.070);
-  --panel1: rgba(255,255,255,0.035);
+  --panel0: rgba(255,255,255,0.060);
+  --panel1: rgba(255,255,255,0.030);
 
-  --border:  rgba(255,255,255,0.12);
-  --border2: rgba(255,255,255,0.08);
+  --border:  rgba(255,255,255,0.14);
+  --border2: rgba(255,255,255,0.09);
 
-  --text:  rgba(255,255,255,0.92);
-  --muted: rgba(255,255,255,0.68);
+  --text:  rgba(255,255,255,0.94);
+  --muted: rgba(255,255,255,0.60);
 
-  --good: rgba(34,197,94,0.96);
-  --bad:  rgba(251,113,133,0.96);
+  /* Global Indicators (Rich Fluorescent) */
+  --good: rgba(46, 213, 115, 0.98); /* Premium Neon Emerald */
+  --bad:  rgba(255, 71, 87, 0.98);  /* Premium Neon Crimson */
 
-  --shadow:  0 20px 70px rgba(0,0,0,0.60);
-  --shadow2: 0 14px 32px rgba(0,0,0,0.48);
+  --shadow:  0 20px 70px rgba(0,0,0,0.80);
+  --shadow2: 0 14px 32px rgba(0,0,0,0.60);
 
   --radius-lg: 22px;
 
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
           "Liberation Mono","Courier New", monospace;
 
-  /* Separate paddings */
-  --pad-x-top: 10px;
-  --pad-x-sector: 37px; /* smaller so sector headers don’t truncate */
+  /* TIGHT PADDINGS for "No Spacing" look */
+  --pad-x-top: 4px;
+  --pad-x-sector: 4px;
 
-  /* Dial colors (subdued luxury) */
-  --dial-sell-strong:   rgba(214,  90, 115, 1);
-  --dial-sell:          rgba(196,  84, 106, 1);
-  --dial-neutral-1:     rgba(138, 172, 255, 1);
-  --dial-neutral-2:     rgba(110, 200, 235, 1);
-  --dial-buy:           rgba( 86, 208, 181, 1);
-  --dial-buy-strong:    rgba( 72, 195, 142, 1);
+  /* --- PREMIUM JEWEL-TONE DIAL COLORS --- */
+  
+  /* Sell Side (Ruby/Crimson Gradients) */
+  --dial-sell-strong:   rgba(220, 20, 60, 1);    /* Deep Crimson */
+  --dial-sell:          rgba(255, 71, 87, 1);    /* Bright Ruby */
+  
+  /* Neutral Zone (Sapphire/Azure Gradients) */
+  --dial-neutral-1:     rgba(55, 66, 250, 1);    /* Deep Royal Blue */
+  --dial-neutral-2:     rgba(30, 144, 255, 1);   /* Bright Azure */
+  
+  /* Buy Side (Emerald/Malachite Gradients) */
+  --dial-buy:           rgba(46, 213, 115, 1);   /* Bright Emerald */
+  --dial-buy-strong:    rgba(32, 191, 107, 1);   /* Deep Malachite */
 
-  --dial-arc-opacity:   0.88;
-  --dial-contrast:      1.18;
-  --dial-saturate:      0.92;
-  --dial-brightness:    1.02;
+  --dial-arc-opacity:   0.92; /* Slightly higher for more glow */
+  --dial-contrast:      1.20;
+  --dial-saturate:      1.10; /* Richer colors */
+  --dial-brightness:    1.05;
 }
 
 /* ----------------------------
@@ -60,10 +69,11 @@ body{
   -webkit-font-smoothing: antialiased;
   text-rendering: geometricPrecision;
 
+  /* Desaturated/Neutral Atmosphere */
   background:
-    radial-gradient(900px 520px at 14% 8%, rgba(124,92,255,0.18), transparent 60%),
-    radial-gradient(900px 520px at 88% 10%, rgba(34,211,238,0.12), transparent 60%),
-    radial-gradient(1200px 700px at 50% 110%, rgba(215,181,109,0.08), transparent 60%),
+    radial-gradient(900px 520px at 14% 8%, rgba(255,255,255,0.03), transparent 60%),
+    radial-gradient(900px 520px at 88% 10%, rgba(255,255,255,0.02), transparent 60%),
+    radial-gradient(1200px 700px at 50% 110%, rgba(255,255,255,0.02), transparent 60%),
     linear-gradient(180deg, var(--bg0), var(--bg1));
   overflow-x: hidden;
 }
@@ -95,7 +105,7 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
   padding: 10px 10px;
   margin: 0 0 10px;
   border-bottom: 1px solid var(--border2);
-  background: linear-gradient(180deg, rgba(6,8,18,0.92), rgba(6,8,18,0.55));
+  background: linear-gradient(180deg, rgba(5,5,5,0.95), rgba(5,5,5,0.65));
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
@@ -186,7 +196,7 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
   min-height: 198px;
   border-radius: 18px;
   border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(0,0,0,0.18);
+  background: rgba(0,0,0,0.40); /* Darker Card */
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), 0 22px 60px rgba(0,0,0,0.55);
   padding: 10px;
   display: flex;
@@ -210,12 +220,12 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
   box-shadow: 0 16px 34px rgba(0,0,0,0.55);
 }
 .bar-green{
-  background: linear-gradient(180deg, rgba(34,197,94,0.98), rgba(34,197,94,0.35));
-  box-shadow: 0 14px 28px rgba(34,197,94,0.14);
+  background: linear-gradient(180deg, var(--good), rgba(46, 213, 115, 0.35));
+  box-shadow: 0 14px 28px rgba(46, 213, 115, 0.14);
 }
 .bar-red{
-  background: linear-gradient(180deg, rgba(251,113,133,0.55), rgba(251,113,133,0.98));
-  box-shadow: 0 14px 28px rgba(251,113,133,0.14);
+  background: linear-gradient(180deg, rgba(255, 71, 87, 0.55), var(--bad));
+  box-shadow: 0 14px 28px rgba(255, 71, 87, 0.14);
 }
 .bar-name{
   text-align: center;
@@ -233,11 +243,11 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
   overflow: hidden;
   border: 1px solid rgba(255,255,255,0.12);
   position: relative;
-  box-shadow: 0 26px 80px rgba(0,0,0,0.58), inset 0 1px 0 rgba(255,255,255,0.08);
+  box-shadow: 0 26px 80px rgba(0,0,0,0.80), inset 0 1px 0 rgba(255,255,255,0.08);
 }
 
 /* ==========================================================================
-   AG GRID — STRAIGHT ALIGNMENT (headers aligned with values)
+   AG GRID — ULTRA ALIGNMENT (No Gap / Flush Edges)
 ========================================================================== */
 .ag-theme-alpine-dark{
   --ag-font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -253,105 +263,95 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
   --ag-odd-row-background-color: rgba(255,255,255,0.02);
   --ag-row-hover-color: rgba(255,255,255,0.055);
 
-  --ag-selected-row-background-color: rgba(124,92,255,0.12);
-  --ag-range-selection-border-color: rgba(124,92,255,0.70);
+  --ag-selected-row-background-color: rgba(255,255,255,0.12);
+  --ag-range-selection-border-color: rgba(255,255,255,0.50);
 
   --ag-header-height: 44px;
   --ag-row-height: 40px;
 
-  --grid-pad-x: var(--pad-x-top); /* default */
+  /* Minimal Padding for tighter look */
+  --grid-pad-x: 6px; 
 }
 
-.compact-grid.ag-theme-alpine-dark{ --grid-pad-x: var(--pad-x-top); }
-#grid.ag-theme-alpine-dark{ --grid-pad-x: var(--pad-x-sector); --ag-header-height: 48px; }
+/* Force override paddings for compact look */
+.compact-grid.ag-theme-alpine-dark{ --grid-pad-x: 6px; }
+#grid.ag-theme-alpine-dark{ --grid-pad-x: 6px; --ag-header-height: 48px; }
 
 .ag-theme-alpine-dark .ag-root-wrapper{
   border: none !important;
   background:
-    radial-gradient(1000px 300px at 16% 0%, rgba(124,92,255,0.10), rgba(0,0,0,0.0) 60%),
-    radial-gradient(900px 280px at 92% 12%, rgba(34,211,238,0.08), rgba(0,0,0,0.0) 60%),
+    radial-gradient(1000px 300px at 16% 0%, rgba(255,255,255,0.04), rgba(0,0,0,0.0) 60%),
+    radial-gradient(900px 280px at 92% 12%, rgba(255,255,255,0.03), rgba(0,0,0,0.0) 60%),
     linear-gradient(180deg, rgba(255,255,255,0.060), rgba(255,255,255,0.018));
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
 
 .ag-theme-alpine-dark .ag-header{
-  background: linear-gradient(180deg, rgba(6,8,18,0.92), rgba(6,8,18,0.55)) !important;
+  background: linear-gradient(180deg, rgba(5,5,5,0.95), rgba(5,5,5,0.65)) !important;
   border-bottom: 1px solid rgba(255,255,255,0.10) !important;
 }
 
 .ag-theme-alpine-dark .ag-row{ border-bottom: 1px solid rgba(255,255,255,0.06); }
 .ag-theme-alpine-dark .ag-row:hover{ background: rgba(255,255,255,0.04) !important; }
 
-/* Header label and cells share the SAME padding */
+/* ----------------------------------------------------
+   ALIGNMENT LOGIC (Headers & Cells)
+   Ensure Headers align perfectly with Data
+---------------------------------------------------- */
+
+/* 1. Reset standard paddings to be small and equal */
+.ag-theme-alpine-dark .ag-header-cell,
+.ag-theme-alpine-dark .ag-cell {
+  padding-left: var(--grid-pad-x) !important;
+  padding-right: var(--grid-pad-x) !important;
+}
+
+/* 2. Header Label Container: Flex width 100% */
 .ag-theme-alpine-dark .ag-header-cell-label{
-  padding-left: var(--grid-pad-x) !important;
-  padding-right: var(--grid-pad-x) !important;
   width: 100% !important;
   box-sizing: border-box;
   display: flex !important;
   align-items: center !important;
-  gap: 10px !important;
-}
-.ag-theme-alpine-dark .ag-cell{
-  padding-left: var(--grid-pad-x) !important;
-  padding-right: var(--grid-pad-x) !important;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
+  gap: 8px !important;
 }
 
-/* Header text not stretching */
-.ag-theme-alpine-dark .ag-header-cell-text{
+/* 3. Standard Left Alignment (Default) */
+.ag-theme-alpine-dark .ag-header-cell-label { justify-content: flex-start; }
+
+/* 4. Right Alignment (Crucial for proper column alignment) */
+.ag-theme-alpine-dark .ag-header-cell.ag-right-aligned-header .ag-header-cell-label {
+  justify-content: flex-end !important;
+}
+
+/* 5. Fix Sort Icons on Right Aligned Headers
+   This moves the sort icon to the LEFT of the text, so text is flush right */
+.ag-theme-alpine-dark .ag-header-cell.ag-right-aligned-header .ag-header-icon,
+.ag-theme-alpine-dark .ag-header-cell.ag-right-aligned-header .ag-header-cell-menu-button {
+  order: -1 !important; /* Move to start */
+  margin-right: 6px !important;
+  margin-left: 0 !important;
+}
+
+.ag-theme-alpine-dark .ag-header-cell.ag-right-aligned-header .ag-header-cell-text {
+  order: 2 !important;
   flex: 0 1 auto !important;
-  width: auto !important;
-  min-width: 0 !important;
-  white-space: nowrap !important;
-}
-
-/* Right headers: icons left, text flush right */
-.ag-theme-alpine-dark .ag-header-cell.ag-right-aligned-header .ag-header-cell-label{
-  justify-content: flex-end !important;
-}
-.ag-theme-alpine-dark .ag-header-cell.ag-right-aligned-header .ag-header-cell-menu-button,
-.ag-theme-alpine-dark .ag-header-cell.ag-right-aligned-header .ag-header-cell-filter-button,
-.ag-theme-alpine-dark .ag-header-cell.ag-right-aligned-header .ag-sort-indicator-container{
-  order: 1 !important;
-  margin-right: 8px !important;
-}
-.ag-theme-alpine-dark .ag-header-cell.ag-right-aligned-header .ag-header-cell-text{
-  order: 99 !important;
-  margin-left: auto !important;
   text-align: right !important;
 }
 
-/* Cells: value container always full width */
-.ag-theme-alpine-dark .ag-cell-value{
+/* 6. Cell Value Alignment */
+.ag-theme-alpine-dark .ag-cell-value,
+.ag-theme-alpine-dark .ag-cell-wrapper {
   width: 100% !important;
   display: flex !important;
   align-items: center !important;
-  justify-content: flex-start;
-}
-.ag-theme-alpine-dark .ag-cell.ag-right-aligned-cell .ag-cell-value{
-  justify-content: flex-end !important;
-  text-align: right !important;
 }
 
-/* Wrapper safety for renderers */
-.ag-theme-alpine-dark .ag-cell .ag-cell-wrapper{
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-}
-.ag-theme-alpine-dark .ag-cell.ag-right-aligned-cell .ag-cell-wrapper{
-  justify-content: flex-end !important;
-  text-align: right !important;
-}
-
-/* If you use cellClass="cell-num" */
+/* Left is default. Force Right for number classes */
+.ag-theme-alpine-dark .ag-cell.ag-right-aligned-cell .ag-cell-value,
+.ag-theme-alpine-dark .ag-cell.ag-right-aligned-cell .ag-cell-wrapper,
 .ag-theme-alpine-dark .ag-cell.cell-num .ag-cell-value,
-.ag-theme-alpine-dark .ag-cell.cell-num .ag-cell-wrapper{
+.ag-theme-alpine-dark .ag-cell.cell-num .ag-cell-wrapper {
   justify-content: flex-end !important;
   text-align: right !important;
 }
@@ -359,10 +359,47 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
 /* Sector grid: smaller header icon buttons so headers don’t truncate */
 #grid.ag-theme-alpine-dark .ag-header-cell-menu-button,
 #grid.ag-theme-alpine-dark .ag-header-cell-filter-button{
-  width: 22px !important;
-  height: 22px !important;
+  width: 20px !important;
+  height: 20px !important;
   padding: 0 !important;
 }
+
+/* ----------------------------
+   GENERIC TABLES (For Sectors/Tooltips)
+   Ensures HTML tables match Grid alignment
+---------------------------- */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed; /* Equal columns / strict layout */
+  border-spacing: 0;
+}
+
+th, td {
+  padding: 8px 6px; /* Tight padding matches grid */
+  border-bottom: 1px solid var(--border2);
+  font-family: var(--mono);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Header Alignment */
+th {
+  text-align: right;
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+th:first-child { text-align: left; } /* First col usually symbol/name */
+
+/* Body Alignment */
+td {
+  text-align: right;
+  color: var(--text);
+  font-weight: 600;
+}
+td:first-child { text-align: left; }
 
 /* ----------------------------
    STOCK CELL
@@ -370,8 +407,11 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
 .stock-cell{
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   line-height: 1.1;
+  justify-content: center;
+  align-items: flex-start; /* Ensure left align */
+  height: 100%;
 }
 .stock-sym{
   font-family: var(--mono);
@@ -382,10 +422,10 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
 }
 .stock-sym:hover{ text-decoration: underline; color: #fff; }
 .stock-name{
-  font-size: 12px;
-  font-weight: 750;
-  color: rgba(255,255,255,0.62);
-  max-width: 340px;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.50);
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -723,8 +763,9 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
 /* state tints */
 .dial-state.state-ss,
 .dial-state.state-sell{
-  border-color: rgba(214, 90, 115, 0.30);
-  background: linear-gradient(180deg, rgba(214,90,115,0.18), rgba(214,90,115,0.06));
+  border-color: rgba(255, 71, 87, 0.30);
+  background: linear-gradient(180deg, rgba(255,71,87,0.18), rgba(255,71,87,0.06));
+  color: var(--bad);
 }
 .dial-state.state-neutral{
   border-color: rgba(255,255,255,0.22);
@@ -732,8 +773,9 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
 }
 .dial-state.state-buy,
 .dial-state.state-sb{
-  border-color: rgba(86, 208, 181, 0.28);
-  background: linear-gradient(180deg, rgba(86,208,181,0.18), rgba(86,208,181,0.06));
+  border-color: rgba(46, 213, 115, 0.28);
+  background: linear-gradient(180deg, rgba(46,213,115,0.18), rgba(46,213,115,0.06));
+  color: var(--good);
 }
 
 /* Section headings */
@@ -761,8 +803,8 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
   width: 10px;
   height: 10px;
   border-radius: 999px;
-  background: linear-gradient(135deg, rgba(124,92,255,0.95), rgba(34,211,238,0.75));
-  box-shadow: 0 0 0 5px rgba(124,92,255,0.14), 0 10px 26px rgba(34,211,238,0.12);
+  background: #fff;
+  box-shadow: 0 0 0 5px rgba(255,255,255,0.05), 0 0 12px rgba(255,255,255,0.5);
 }
 
 .page-wrap h6{ position: relative; }
@@ -786,4 +828,3 @@ hr{ border-color: rgba(255,255,255,0.08) !important; opacity: 1; }
   .sector-bar-card{ width: 78px; }
   .page-wrap h6{ font-size: 11px; padding: 9px 12px; letter-spacing: 0.45px; }
 }
-
