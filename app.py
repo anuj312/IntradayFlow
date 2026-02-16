@@ -1268,6 +1268,25 @@ def sector_page(sector: str):
     return html.Div(
         [
             dcc.Interval(id="refresh_sector", interval=2000, n_intervals=0),
+
+            # Back button ABOVE sector name (left aligned)
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Button(
+                            "Back",
+                            href=f"{BASE}",
+                            color="secondary",
+                            outline=True,
+                            className="btn-back",
+                        ),
+                        width="auto",
+                    ),
+                ],
+                className="g-2 mb-2",
+            ),
+
+            # Title + Sort row
             dbc.Row(
                 [
                     dbc.Col(html.H4(f"{sector} Stocks", className="page-title"), width=True),
@@ -1278,56 +1297,102 @@ def sector_page(sector: str):
                                 {"label": "Sort: RFactor", "value": "RFactor"},
                                 {"label": "Sort: RVOLm", "value": "RVOLm"},
                             ],
-                            value="RFactor",
+                            value="RVOLm",  # default sort = RVOLm
                             inline=True,
                             className="ms-2",
                         ),
                         width="auto",
                     ),
-                    dbc.Col(
-                        dbc.Button("Back", href=f"{BASE}", color="secondary", outline=True, className="btn-back"),
-                        width="auto",
-                    ),
                 ],
                 className="align-items-center g-2",
             ),
+
             dag.AgGrid(
                 id="grid",
                 className="ag-theme-alpine-dark grid-wrap",
                 columnDefs=[
-                    {"colId": "stock", "field": "Symbol", "headerName": "STOCK", "pinned": "left",
-                     "cellRenderer": "StockCell", "minWidth": 260},
-
-                    {"colId": "price", "field": "Price", "headerName": "PRICE", "type": "rightAligned",
-                     "valueFormatter": {"function": "fmt2(params.value)"}, "minWidth": 120, "flex": 1},
-
-                    {"colId": "chgO", "field": "Chg (O)", "headerName": "CHG (O)", "type": "rightAligned",
-                     "valueFormatter": {"function": "fmtSigned2(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"},
-                     "minWidth": 130, "flex": 1},
-
-                    {"colId": "gapPct", "field": "Gap%", "headerName": "GAP%", "type": "rightAligned",
-                     "valueFormatter": {"function": "fmtPct(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"},
-                     "minWidth": 115, "flex": 1},
-
-                    {"colId": "rvol", "field": "RVOL", "headerName": "RVOLm", "type": "rightAligned",
-                     "cellRenderer": "RfactorPill",
-                     "valueFormatter": {"function": "fmt2(params.value)"},
-                     "minWidth": 130, "flex": 1},
-
-                    {"colId": "rfactor", "field": "RFactor", "headerName": "RFACTOR", "type": "rightAligned",
-                     "valueFormatter": {"function": xfmt},
-                     "minWidth": 130, "flex": 1},
-
-                    {"colId": "dirr", "field": "DirR", "headerName": "DIR R", "type": "rightAligned",
-                     "valueFormatter": {"function": xfmt},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"},
-                     "minWidth": 120, "flex": 1},
+                    {
+                        "colId": "stock",
+                        "field": "Symbol",
+                        "headerName": "STOCK",
+                        "pinned": "left",
+                        "cellRenderer": "StockCell",
+                        "minWidth": 260,
+                    },
+                    {
+                        "colId": "price",
+                        "field": "Price",
+                        "headerName": "PRICE",
+                        "type": "rightAligned",
+                        "valueFormatter": {"function": "fmt2(params.value)"},
+                        "minWidth": 120,
+                        "flex": 1,
+                    },
+                    {
+                        "colId": "chgO",
+                        "field": "Chg (O)",
+                        "headerName": "CHG (O)",
+                        "type": "rightAligned",
+                        "valueFormatter": {"function": "fmtSigned2(params.value)"},
+                        "cellClassRules": {
+                            "cell-pos": "params.value > 0",
+                            "cell-neg": "params.value < 0",
+                            "cell-zero": "params.value === 0",
+                        },
+                        "minWidth": 130,
+                        "flex": 1,
+                    },
+                    {
+                        "colId": "gapPct",
+                        "field": "Gap%",
+                        "headerName": "GAP%",
+                        "type": "rightAligned",
+                        "valueFormatter": {"function": "fmtPct(params.value)"},
+                        "cellClassRules": {
+                            "cell-pos": "params.value > 0",
+                            "cell-neg": "params.value < 0",
+                            "cell-zero": "params.value === 0",
+                        },
+                        "minWidth": 115,
+                        "flex": 1,
+                    },
+                    {
+                        "colId": "rvol",
+                        "field": "RVOL",
+                        "headerName": "RVOLm",
+                        "type": "rightAligned",
+                        "cellRenderer": "RfactorPill",
+                        "valueFormatter": {"function": "fmt2(params.value)"},
+                        "minWidth": 130,
+                        "flex": 1,
+                    },
+                    {
+                        "colId": "rfactor",
+                        "field": "RFactor",
+                        "headerName": "RFACTOR",
+                        "type": "rightAligned",
+                        "valueFormatter": {"function": xfmt},
+                        "minWidth": 130,
+                        "flex": 1,
+                    },
+                    {
+                        "colId": "dirr",
+                        "field": "DirR",
+                        "headerName": "DIR R",
+                        "type": "rightAligned",
+                        "valueFormatter": {"function": xfmt},
+                        "cellClassRules": {
+                            "cell-pos": "params.value > 0",
+                            "cell-neg": "params.value < 0",
+                            "cell-zero": "params.value === 0",
+                        },
+                        "minWidth": 120,
+                        "flex": 1,
+                    },
                 ],
                 rowData=[],
                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                dashGridOptions=_sector_grid_opts("RFactor"),
+                dashGridOptions=_sector_grid_opts("RVOLm"),  # initial grid sort = RVOLm
                 style={"height": "auto", "width": "100%"},
             ),
         ],
