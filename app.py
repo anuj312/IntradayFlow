@@ -31,10 +31,10 @@ import dash_bootstrap_components as dbc
 import dash_ag_grid as dag
 
 from kiteconnect import KiteConnect, KiteTicker
-from rotation import app as rotation_app
 
-# Volm page plugin (Dash page in web.py)
+# Dash page plugins
 import web
+import contribution
 
 
 # =============================================================================
@@ -124,7 +124,7 @@ SECTOR_DEFINITIONS = {
         "SUPREMEIND", "SWIGGY"
     ],
     "CEMENT": ["SHREECEM", "DALBHARAT", "AMBUJACEM", "ULTRACEMCO"],
-   "FINSERVICE": [
+    "FINSERVICE": [
         "PNBHOUSING", "BAJAJFINSV", "ICICIPRULI", "NUVAMA",
         "HDFCLIFE", "SAMMAANCAP", "ANGELONE", "RECLTD",
         "BAJFINANCE", "BSE", "MAXHEALTH", "ICICIGI",
@@ -139,7 +139,7 @@ SECTOR_DEFINITIONS = {
     "BANK": [
         "IDFCFIRSTB", "FEDERALBNK", "INDUSINDBK", "HDFCBANK",
         "SBIN", "KOTAKBANK", "AUBANK", "CANBK",
-        "BANDHANBNK", "RBLBANK", "ICICIBANK", "AXISBANK", "BANKBARODA","INDIANB"
+        "BANDHANBNK", "RBLBANK", "ICICIBANK", "AXISBANK", "BANKBARODA", "INDIANB"
     ],
     "NIFTY_50": [
         "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT",
@@ -410,10 +410,10 @@ def load_nfo_instruments_once():
 
 def _chunk(lst: List[str], n: int):
     for i in range(0, len(lst), n):
-        yield lst[i : i + n]
+        yield lst[i: i + n]
 
 
-def _quote_many(keys: List[str], chunk_size: int = PCR_QUOTE_CHUNK) -> dict:
+def _quote_many(keys: List[str], chunk_size: int = 180) -> dict:
     out = {}
     for ch in _chunk(keys, chunk_size):
         out.update(kite.quote(ch))
@@ -999,6 +999,20 @@ web.register_volm(
     },
 )
 
+# register Contribution page callbacks
+contribution.register_contribution(
+    dash_app,
+    BASE=BASE,
+    ctx={
+        "LOCK": LOCK,
+        "IST": IST,
+        "SECTOR_DEFINITIONS": SECTOR_DEFINITIONS,
+        "symbol_to_token": symbol_to_token,
+        "DAILY_STATS": DAILY_STATS,
+        "compute_rfactor_row_for_token": compute_rfactor_row_for_token,
+    },
+)
+
 
 def dial_component(prefix: str, title: str):
     return html.Div(
@@ -1038,7 +1052,7 @@ def _sector_grid_opts(sort_by: str) -> dict:
         "suppressHeaderMenuButton": False,
         "suppressHeaderFilterButton": False,
         "alwaysShowVerticalScroll": False,
-        "sortModel": sort_model,  # force correct sort + header arrow
+        "sortModel": sort_model,
     }
 
 
@@ -1161,7 +1175,7 @@ def sectors_page():
                     {"label": "Sort: RVOLm Mean", "value": "RVOLmMean"},    # Net / N
                     {"label": "Sort: DirR", "value": "DirR"},
                 ],
-                value="RVOLm",  # default
+                value="RVOLm",
                 inline=True,
                 className="mb-2",
             ),
@@ -1259,7 +1273,6 @@ def sectors_page():
 
 
 def sector_page(sector: str):
-    # Display like multipliers: 0.45x, 4x, -23x
     xfmt = (
         "params.value==null ? '—' : "
         "(((Math.abs(params.value) < 1) ? params.value.toFixed(2) : params.value.toFixed(0)) + 'x')"
@@ -1269,7 +1282,6 @@ def sector_page(sector: str):
         [
             dcc.Interval(id="refresh_sector", interval=2000, n_intervals=0),
 
-            # Back button ABOVE sector name (left aligned)
             dbc.Row(
                 [
                     dbc.Col(
@@ -1286,7 +1298,6 @@ def sector_page(sector: str):
                 className="g-2 mb-2",
             ),
 
-            # Title + Sort row
             dbc.Row(
                 [
                     dbc.Col(html.H4(f"{sector} Stocks", className="page-title sector-title"), width=True),
@@ -1297,7 +1308,7 @@ def sector_page(sector: str):
                                 {"label": "Sort: RFactor", "value": "RFactor"},
                                 {"label": "Sort: RVOLm", "value": "RVOLm"},
                             ],
-                            value="RVOLm",  # default sort = RVOLm
+                            value="RVOLm",
                             inline=True,
                             className="ms-2",
                         ),
@@ -1392,7 +1403,7 @@ def sector_page(sector: str):
                 ],
                 rowData=[],
                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                dashGridOptions=_sector_grid_opts("RVOLm"),  # initial grid sort = RVOLm
+                dashGridOptions=_sector_grid_opts("RVOLm"),
                 style={"height": "auto", "width": "100%"},
             ),
         ],
@@ -1430,6 +1441,9 @@ def route(pathname):
     if pn in (f"{BASE}volm", f"{BASE}volm/"):
         return web.volm_page(BASE)
 
+    if pn in (f"{BASE}contribution", f"{BASE}contribution/"):
+        return contribution.contribution_page(BASE)
+
     if pn.startswith(f"{BASE}sector/"):
         sector = unquote(pn.split(f"{BASE}sector/")[1]).upper()
         return sector_page(sector) if sector in SECTOR_DEFINITIONS else dbc.Alert("Sector not found", color="danger")
@@ -1461,8 +1475,8 @@ def update_top_stats(_):
             style={"textDecoration": "none", "marginLeft": "8px", "cursor": "pointer"},
         ),
         html.A(
-            "Rotation ⬈",
-            href="/rotation/",
+            "Contribution ⬈",
+            href=f"{BASE}contribution",
             target="_blank",
             className="stat-chip",
             style={"textDecoration": "none", "marginLeft": "8px", "cursor": "pointer"},
@@ -1603,7 +1617,6 @@ def _fmt_oi_compact(v: Optional[float]) -> str:
     Input("refresh_sectors", "n_intervals"),
 )
 def update_dials(_):
-    # Sentiment
     with LOCK:
         sm = compute_market_sentiment_proxy()
 
@@ -1620,7 +1633,6 @@ def update_dials(_):
         className="dial-sub-inner",
     )
 
-    # PCR
     pn = compute_real_nifty_oi_pcr(strikes_around_atm=PCR_STRIKES_AROUND_ATM)
 
     if pn and pn.get("pcr") is not None:
@@ -1721,7 +1733,6 @@ def update_grid(_n, pathname, sort_by):
 # =============================================================================
 app = FastAPI(title="TurboTrades (No Auth)")
 
-app.mount("/rotation", rotation_app)
 HERE = Path(__file__).resolve().parent
 THEME_PATH = HERE / "assets" / "theme.css"
 
