@@ -399,10 +399,10 @@ def load_nfo_instruments_once():
             df = df[df["instrument_type"].isin(["CE", "PE"])].copy()
             df = df[df["name"] == "NIFTY"].copy()
             df["expiry"] = pd.to_datetime(df["expiry"]).dt.date
-            NFO_INS_DF = df
+            globals()["NFO_INS_DF"] = df
             log.info("Loaded NFO instruments (NIFTY only): %s rows", len(df))
         except Exception as e:
-            NFO_LOAD_ERR = repr(e)
+            globals()["NFO_LOAD_ERR"] = repr(e)
             log.exception("Failed to load NFO instruments")
 
     threading.Thread(target=_run, daemon=True).start()
@@ -514,9 +514,6 @@ def pcr_label_from_value(pcr: float) -> str:
     return "STRONG SELL"
 
 
-# =============================================================================
-# METRICS / TABLE BUILDERS
-# =============================================================================
 def _time_factor_ist_for_rvol(now_ist: Optional[datetime] = None) -> float:
     """Fraction of session completed (9:15-15:30). Clamped."""
     now_ist = now_ist or datetime.now(IST)
@@ -536,14 +533,6 @@ def _time_factor_ist_for_rvol(now_ist: Optional[datetime] = None) -> float:
 
 
 def compute_rfactor_row_for_token(token: int):
-    """
-    ORIGINAL (UNPACED) RFACTOR:
-      rvol       = vol_today / avg_vol_20
-      rangeFact  = range_today / avg_range_20
-      moveFact   = abs(%from_open) / avg_abs_oc_ret_20
-      RFactor = rvol * rangeFact * moveFact
-      DirR    = sign(%from_open) * RFactor
-    """
     state = get_live_or_eod_state(token)
     if not state:
         return None
@@ -593,14 +582,6 @@ def compute_rfactor_row_for_token(token: int):
 
 
 def compute_rfactor_row_for_token_paced(token: int):
-    """
-    PACED RFACTOR (used only by /dash/rfactor page):
-      rvolm      = vol_today / (avg_vol_20 * time_factor)
-      rangeFact  = range_today / avg_range_20
-      moveFact   = abs(%from_open) / avg_abs_oc_ret_20
-      RFactor = rvolm * rangeFact * moveFact
-      DirR    = sign(%from_open) * RFactor
-    """
     state = get_live_or_eod_state(token)
     if not state:
         return None
@@ -966,9 +947,6 @@ def compute_market_sentiment_proxy():
     return {"adv": adv, "dec": dec, "unch": unch, "total": total, "score": float(score), "label": label}
 
 
-# =============================================================================
-# TICKER (AUTO-RESTART)
-# =============================================================================
 _started = False
 
 
@@ -1045,10 +1023,12 @@ rfactor.register_rfactor(
     BASE=BASE,
     ctx={
         "LOCK": LOCK,
-        "IST": IST,  # for 09:20 gating in rfactor.py
+        "IST": IST,
         "ALL_SYMBOLS": ALL_SYMBOLS,
+        "SECTOR_DEFINITIONS": SECTOR_DEFINITIONS,  # IMPORTANT for sector rotation in rfactor.py
         "symbol_to_token": symbol_to_token,
         "compute_rfactor_row_for_token_paced": compute_rfactor_row_for_token_paced,
+        "EOD_SNAPSHOT": EOD_SNAPSHOT, 
     },
 )
 
@@ -1097,49 +1077,14 @@ def _sector_grid_opts(sort_by: str) -> dict:
 
 def sectors_page():
     four_cols = [
-        {
-            "colId": "stock",
-            "field": "Symbol",
-            "headerName": "STOCK",
-            "cellRenderer": "SymbolCell",
-            "minWidth": 10,
-            "flex": 1,
-            "headerClass": "h-left",
-            "cellClass": "c-left",
-        },
-        {
-            "colId": "pctChg",
-            "field": "%Change",
-            "headerName": "%CHG",
-            "cellRenderer": "PctPill",
-            "minWidth": 150,
-            "maxWidth": 150,
-            "suppressSizeToFit": True,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
-        },
-        {
-            "colId": "rfactor",
-            "field": "RFactor",
-            "headerName": "RFACTOR",
-            "cellRenderer": "RfactorPill",
-            "minWidth": 125,
-            "maxWidth": 170,
-            "suppressSizeToFit": True,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
-        },
-        {
-            "colId": "volume",
-            "field": "Vol",
-            "headerName": "VOLUME",
-            "cellRenderer": "VolPill",
-            "minWidth": 140,
-            "maxWidth": 190,
-            "suppressSizeToFit": True,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
-        },
+        {"colId": "stock", "field": "Symbol", "headerName": "STOCK", "cellRenderer": "SymbolCell", "minWidth": 10, "flex": 1,
+         "headerClass": "h-left", "cellClass": "c-left"},
+        {"colId": "pctChg", "field": "%Change", "headerName": "%CHG", "cellRenderer": "PctPill", "minWidth": 150, "maxWidth": 150,
+         "suppressSizeToFit": True, "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
+        {"colId": "rfactor", "field": "RFactor", "headerName": "RFACTOR", "cellRenderer": "RfactorPill", "minWidth": 125, "maxWidth": 170,
+         "suppressSizeToFit": True, "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
+        {"colId": "volume", "field": "Vol", "headerName": "VOLUME", "cellRenderer": "VolPill", "minWidth": 140, "maxWidth": 190,
+         "suppressSizeToFit": True, "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
     ]
 
     grid_opts = {
