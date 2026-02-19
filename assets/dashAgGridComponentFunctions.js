@@ -59,12 +59,14 @@
   }
 
   function tvUrlFor(sym) {
-    return (
-      "https://www.tradingview.com/chart/?symbol=" +
-      encodeURIComponent("NSE:" + sym) +
-      "&interval=5"
-    );
-  }
+  const tvSym = (sym === "BAJAJ-AUTO") ? "BAJAJ_AUTO" : sym;
+
+  return (
+    "https://www.tradingview.com/chart/?symbol=" +
+    encodeURIComponent("NSE:" + tvSym) +
+    "&interval=5"
+  );
+}
 
   // -----------------------------
   // Cell renderers

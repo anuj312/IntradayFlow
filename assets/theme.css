@@ -1761,3 +1761,23 @@ td:first-child { text-align: left; }
   background: rgba(0,0,0,0.25);
 }
 
+/* Ultra premium topbar brand */
+.tt-brand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding: 6px 0;
+}
+
+.tt-logo{
+  height: 50px;
+  width: auto;
+  filter: drop-shadow(0 12px 26px rgba(0,0,0,0.55));
+  opacity: 0.98;
+}
+
+.tt-logo:hover{
+  opacity: 1;
+  filter: drop-shadow(0 16px 36px rgba(0,0,0,0.65));
+}
+

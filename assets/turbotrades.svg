@@ -1,0 +1,69 @@
+<svg width="420" height="120" viewBox="0 0 420 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="420" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9BB4FF"/>
+      <stop offset="0.35" stop-color="#7A5CFF"/>
+      <stop offset="0.7" stop-color="#00D7A7"/>
+      <stop offset="1" stop-color="#00B3FF"/>
+    </linearGradient>
+
+    <linearGradient id="g2" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B0F18"/>
+      <stop offset="1" stop-color="#11162A"/>
+    </linearGradient>
+
+    <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feColorMatrix in="blur" type="matrix"
+        values="1 0 0 0 0
+                0 1 0 0 0
+                0 0 1 0 0
+                0 0 0 0.55 0" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="inner" x="-20%" y="-20%" width="140%" height="140%">
+      <feOffset dx="0" dy="1"/>
+      <feGaussianBlur stdDeviation="1.4" result="shadow"/>
+      <feComposite in="shadow" in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1"/>
+      <feColorMatrix type="matrix"
+        values="0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0.55 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Mark -->
+  <g transform="translate(12,12)">
+    <rect x="0" y="0" width="96" height="96" rx="20" fill="url(#g2)" stroke="rgba(255,255,255,0.10)" stroke-width="1.2"/>
+    <rect x="10" y="10" width="76" height="76" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+    <g filter="url(#softGlow)">
+      <!-- Stylized TT + upstroke -->
+      <path d="M22 35H74" stroke="url(#g1)" stroke-width="7.5" stroke-linecap="round"/>
+      <path d="M34 35V78" stroke="url(#g1)" stroke-width="7.5" stroke-linecap="round"/>
+      <path d="M62 35V78" stroke="url(#g1)" stroke-width="7.5" stroke-linecap="round"/>
+
+      <!-- rising slash -->
+      <path d="M26 78L78 44" stroke="url(#g1)" stroke-width="6.5" stroke-linecap="round"/>
+      <path d="M72 44L78 44L78 50" stroke="url(#g1)" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+
+  <!-- Wordmark -->
+  <g transform="translate(128,34)" filter="url(#inner)">
+    <text x="0" y="30" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial" font-size="34" font-weight="850" letter-spacing="0.02em" fill="url(#g1)">
+      TurboTrades
+    </text>
+    <text x="2" y="56" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial" font-size="12.5" font-weight="700" letter-spacing="0.22em" fill="rgba(220,230,255,0.70)">
+      LIVE MARKET DASHBOARD
+    </text>
+  </g>
+</svg>

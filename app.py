@@ -1335,7 +1335,15 @@ dash_app.layout = dbc.Container(
         html.Div(
             dbc.Row(
                 [
-                    dbc.Col(html.Div("TurboTrades", className="top-tab"), width=True),
+                    dbc.Col(
+    html.Div(
+        [
+            html.Img(src=dash.get_asset_url("turbotrades.svg"), className="tt-logo"),
+        ],
+        className="tt-brand",
+    ),
+    width=True,
+),
                     dbc.Col(html.Div(id="top-stats"), width="auto"),
                 ],
                 className="align-items-center g-2",
