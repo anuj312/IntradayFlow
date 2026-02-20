@@ -1,6 +1,8 @@
 # app.py  (NO AUTH • NO FIREBASE • NO SUBSCRIPTIONS)
 #
-# Dashboard: http://127.0.0.1:8000/dash/
+# Dashboard:     http://127.0.0.1:8000/dash/
+# OpenInterest:  http://127.0.0.1:8000/openinterest
+# (also inside dash: http://127.0.0.1:8000/dash/openinterest)
 #
 # Required env:
 #   KITE_API_KEY
@@ -34,7 +36,9 @@ from kiteconnect import KiteConnect, KiteTicker
 
 # Dash page plugins
 import web
-import rfactor
+
+# OpenInterest FastAPI app (mounted)
+import optioninterest as openinterest
 
 
 # =============================================================================
@@ -88,17 +92,14 @@ SECTOR_DEFINITIONS = {
         "ADANIENT", "HINDALCO", "JSWSTEEL", "HINDZINC", "APLAPOLLO",
         "TATASTEEL", "JINDALSTEL", "VEDL", "SAIL", "NATIONALUM", "NMDC"
     ],
-
     "PSUS": [
         "BANKINDIA", "PNB", "INDIANB", "SBIN",
         "UNIONBANK", "BANKBARODA", "CANBK"
     ],
-
     "REALTY": [
         "PHOENIXLTD", "GODREJPROP", "LODHA",
         "OBEROIRLTY", "DLF", "PRESTIGE", "NBCC"
     ],
-
     "ENERGY": [
         "CGPOWER", "RELIANCE", "GMRAIRPORT", "JSWENERGY", "ONGC",
         "POWERGRID", "BLUESTARCO", "COALINDIA", "SUZLON", "IREDA",
@@ -107,28 +108,24 @@ SECTOR_DEFINITIONS = {
         "BDL", "BPCL", "NHPC", "POWERINDIA", "ADANIENSOL",
         "TORNTPOWER", "WAAREEENER"
     ],
-
     "AUTO": [
         "BOSCHLTD", "TIINDIA", "HEROMOTOCO", "M&M", "EICHERMOT",
         "EXIDEIND", "BAJAJ-AUTO", "ASHOKLEY", "MARUTI",
         "TVSMOTOR", "MOTHERSON", "SONACOMS", "UNOMINDA",
         "TMPV", "BHARATFORG", "AMBER", "PGEL"
     ],
-
     "IT": [
         "KAYNES", "TATATECH", "LTIM", "MPHASIS",
         "TCS", "CAMS", "OFSS", "TECHM",
         "TATAELXSI", "HCLTECH", "WIPRO",
         "KPITTECH", "COFORGE", "PERSISTENT", "INFY"
     ],
-
     "PHARMA": [
         "CIPLA", "ALKEM", "BIOCON", "DRREDDY", "MANKIND",
         "TORNTPHARM", "ZYDUSLIFE", "DIVISLAB", "LUPIN",
         "PPLPHARMA", "LAURUSLABS", "FORTIS",
         "AUROPHARMA", "GLENMARK", "SUNPHARMA"
     ],
-
     "FMCG": [
         "ETERNAL", "MARICO", "NYKAA", "NESTLEIND", "VBL",
         "COLPAL", "HINDUNILVR", "PATANJALI", "DMART",
@@ -136,11 +133,9 @@ SECTOR_DEFINITIONS = {
         "ITC", "TATACONSUM", "KALYANKJIL",
         "SUPREMEIND", "SWIGGY"
     ],
-
     "CEMENT": [
         "SHREECEM", "DALBHARAT", "AMBUJACEM", "ULTRACEMCO"
     ],
-
     "FINSERVICE": [
         "PNBHOUSING", "BAJAJFINSV", "ICICIPRULI", "NUVAMA",
         "HDFCLIFE", "SAMMAANCAP", "ANGELONE", "RECLTD",
@@ -154,14 +149,12 @@ SECTOR_DEFINITIONS = {
         "SBIN", "AXISBANK", "KOTAKBANK",
         "ICICIBANK", "IIFL"
     ],
-
     "BANK": [
         "IDFCFIRSTB", "FEDERALBNK", "INDUSINDBK", "HDFCBANK",
         "SBIN", "KOTAKBANK", "AUBANK", "CANBK",
         "BANDHANBNK", "RBLBANK", "ICICIBANK",
         "AXISBANK", "BANKBARODA", "INDIANB"
     ],
-
     "NIFTY_50": [
         "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT",
         "AXISBANK", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV",
@@ -176,7 +169,6 @@ SECTOR_DEFINITIONS = {
         "TITAN", "TRENT", "ULTRACEMCO", "WIPRO",
         "TATAMOTORS", "ETERNAL"
     ],
-
     "MIDCAP": [
         "RVNL", "MPHASIS", "HINDPETRO", "PAGEIND", "POLYCAB",
         "LUPIN", "IDFCFIRSTB", "CONCOR", "CUMMINSIND",
@@ -185,8 +177,6 @@ SECTOR_DEFINITIONS = {
         "GODREJPROP", "AUROPHARMA", "AUBANK",
         "ASTRAL", "HDFCAMC", "JUBLFOOD", "PIIND"
     ],
-
-    # ✅ Newly Created Sector
     "OTHERS": [
         "MFSL",
         "ABCAPITAL",
@@ -198,7 +188,7 @@ SECTOR_DEFINITIONS = {
         "ABB",
         "GAIL",
         "IRCTC"
-    ]
+    ],
 }
 
 ALL_SYMBOLS = sorted(set(sum(SECTOR_DEFINITIONS.values(), [])))
@@ -228,7 +218,7 @@ TOTAL_TICKS = 0
 TPS_WINDOW_SEC = 1.0
 TPS_BUCKETS = deque()
 
-HOT_HISTORY: Dict[int, deque] = {}  # token -> deque[(epoch, ltp, cumvol)]
+HOT_HISTORY: Dict[int, deque] = {}
 
 EOD_SNAPSHOT: Dict[int, Dict[str, Any]] = {}
 DAILY_STATS: Dict[int, Dict[str, Optional[float]]] = {}
@@ -551,7 +541,6 @@ def pcr_label_from_value(pcr: float) -> str:
 
 
 def _time_factor_ist_for_rvol(now_ist: Optional[datetime] = None) -> float:
-    """Fraction of session completed (9:15-15:30). Clamped."""
     now_ist = now_ist or datetime.now(IST)
     m_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
     m_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
@@ -569,11 +558,11 @@ def _time_factor_ist_for_rvol(now_ist: Optional[datetime] = None) -> float:
 
 
 def compute_rfactor_row_for_token(token: int):
-    state = get_live_or_eod_state(token)
-    if not state:
+    state_ = get_live_or_eod_state(token)
+    if not state_:
         return None
 
-    ltp, vol_today, ohlc = state
+    ltp, vol_today, ohlc = state_
     prev_close = ohlc.get("close")
     day_open = ohlc.get("open")
     day_high = ohlc.get("high")
@@ -618,11 +607,11 @@ def compute_rfactor_row_for_token(token: int):
 
 
 def compute_rfactor_row_for_token_paced(token: int):
-    state = get_live_or_eod_state(token)
-    if not state:
+    state_ = get_live_or_eod_state(token)
+    if not state_:
         return None
 
-    ltp, vol_today, ohlc = state
+    ltp, vol_today, ohlc = state_
     prev_close = ohlc.get("close")
     day_open = ohlc.get("open")
     day_high = ohlc.get("high")
@@ -945,10 +934,10 @@ def compute_market_sentiment_proxy():
     adv = dec = unch = 0
 
     for tok in TOKENS:
-        state = get_live_or_eod_state(tok)
-        if not state:
+        state_ = get_live_or_eod_state(tok)
+        if not state_:
             continue
-        ltp, _, ohlc = state
+        ltp, _, ohlc = state_
         op = ohlc.get("open")
         if op is None:
             continue
@@ -1051,20 +1040,6 @@ web.register_volm(
         "DAILY_STATS": DAILY_STATS,
         "get_live_or_eod_state": get_live_or_eod_state,
         "IST": IST,
-    },
-)
-
-rfactor.register_rfactor(
-    dash_app,
-    BASE=BASE,
-    ctx={
-        "LOCK": LOCK,
-        "IST": IST,
-        "ALL_SYMBOLS": ALL_SYMBOLS,
-        "SECTOR_DEFINITIONS": SECTOR_DEFINITIONS,  # IMPORTANT for sector rotation in rfactor.py
-        "symbol_to_token": symbol_to_token,
-        "compute_rfactor_row_for_token_paced": compute_rfactor_row_for_token_paced,
-        "EOD_SNAPSHOT": EOD_SNAPSHOT, 
     },
 )
 
@@ -1372,14 +1347,12 @@ dash_app.layout = dbc.Container(
             dbc.Row(
                 [
                     dbc.Col(
-    html.Div(
-        [
-            html.Img(src=dash.get_asset_url("turbotrades.svg"), className="tt-logo"),
-        ],
-        className="tt-brand",
-    ),
-    width=True,
-),
+                        html.Div(
+                            [html.Img(src=dash.get_asset_url("turbotrades.svg"), className="tt-logo")],
+                            className="tt-brand",
+                        ),
+                        width=True,
+                    ),
                     dbc.Col(html.Div(id="top-stats"), width="auto"),
                 ],
                 className="align-items-center g-2",
@@ -1401,14 +1374,60 @@ def route(pathname):
     if pn in (f"{BASE}volm", f"{BASE}volm/"):
         return web.volm_page(BASE)
 
-    if pn in (f"{BASE}rfactor", f"{BASE}rfactor/"):
-        return rfactor.rfactor_page(BASE)
+    if pn in (f"{BASE}openinterest", f"{BASE}openinterest/"):
+        return html.Iframe(
+            src="/openinterest",
+            style={
+                "width": "100%",
+                "height": "calc(100vh - 140px)",
+                "border": "0",
+                "borderRadius": "16px",
+            },
+        )
 
     if pn.startswith(f"{BASE}sector/"):
         sector = unquote(pn.split(f"{BASE}sector/")[1]).upper()
         return sector_page(sector) if sector in SECTOR_DEFINITIONS else dbc.Alert("Sector not found", color="danger")
 
     return sectors_page()
+
+
+def _oi_inference_chip():
+    # read OpenInterest app state safely
+    try:
+        with openinterest.state_lock:
+            s = dict(openinterest.state)
+    except Exception:
+        s = {}
+
+    baseline_ok = (s.get("baseline_price") is not None) and (s.get("baseline_oi") is not None)
+
+    bt_raw = (s.get("buildup_type") or "NO_CLEAR")
+    bt = bt_raw.replace("_", " ")
+    bias = (s.get("bias") or "NEUTRAL").upper()
+    label = s.get("label") or ""
+
+    # WAITING BASELINE -> default like other header chips (no special color)
+    if not baseline_ok:
+        return html.Div("OI: WAITING BASELINE", className="stat-chip", title=label)
+
+    text = f"OI: {bt} • {bias}"
+
+    # Color by bias (BULLISH green, BEARISH red)
+    if bias == "BULLISH":
+        style = {
+            "color": "var(--good)",
+            "borderColor": "rgba(46, 213, 115, 0.55)",
+        }
+    elif bias == "BEARISH":
+        style = {
+            "color": "var(--bad)",
+            "borderColor": "rgba(255, 71, 87, 0.55)",
+        }
+    else:
+        style = {}  # neutral -> default chip styling
+
+    return html.Div(text, className="stat-chip", style=style, title=label)
 
 
 @dash_app.callback(Output("top-stats", "children"), Input("top_refresh", "n_intervals"))
@@ -1427,10 +1446,14 @@ def update_top_stats(_):
 
     chips = [
         dbc.Badge("Offline" if offline else "Live", color=("danger" if offline else "success"), className="stat-badge"),
+
         html.A("Volm", href=f"{BASE}volm", target="_blank", className="stat-chip",
                style={"textDecoration": "none", "marginLeft": "8px", "cursor": "pointer"}),
-        html.A("RFactor ⬈", href=f"{BASE}rfactor", target="_blank", className="stat-chip",
+
+        html.A("OpenInterest", href=f"{BASE}openinterest", target="_blank", className="stat-chip",
                style={"textDecoration": "none", "marginLeft": "8px", "cursor": "pointer"}),
+
+        _oi_inference_chip(),
     ]
 
     if not d_done:
@@ -1676,10 +1699,18 @@ THEME_PATH = HERE / "assets" / "theme.css"
 
 
 @app.on_event("startup")
-def _startup():
+async def _startup():
     seed_daily_stats_once(per_req_sleep=SEED_SLEEP_SEC)
     start_ticker_once()
     load_nfo_instruments_once()
+
+    # Ensure OpenInterest starts even when mounted
+    await openinterest.on_startup()
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    await openinterest.on_shutdown()
 
 
 @app.get("/dash")
@@ -1717,4 +1748,8 @@ def root():
     return RedirectResponse(url="/dash/", status_code=307)
 
 
+# Mount OpenInterest FastAPI app (websocket-capable)
+app.mount("/openinterest", openinterest.app)
+
+# Mount Dash (WSGI)
 app.mount("/dash", WSGIMiddleware(server))
