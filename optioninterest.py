@@ -73,6 +73,7 @@ kws_client: KiteTicker | None = None
 _started = False
 _baseline_task: asyncio.Task | None = None
 _stats_task: asyncio.Task | None = None
+_roll_task: asyncio.Task | None = None
 
 
 # -------------------- Theme CSS (standalone support) --------------------
@@ -84,7 +85,7 @@ THEME_PATH = HERE / "assets" / "theme.css"
 def theme_css():
     """
     Standalone usage: keep assets/theme.css next to this file.
-    Mounted usage: your main app likely already serves /theme.css.
+    Mounted usage: your main app likely serves /theme.css.
     """
     if THEME_PATH.exists():
         return FileResponse(THEME_PATH, media_type="text/css")
@@ -136,18 +137,33 @@ def classify_buildup(dp: float, doi: int) -> dict:
 
 
 def pick_near_month_nifty_fut() -> tuple[int, str]:
+    """
+    Picks the nearest-expiry NIFTY FUT with expiry >= today (IST date).
+    """
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
 
     inst = pd.DataFrame(kite.instruments("NFO"))
     fut = inst[(inst["name"] == "NIFTY") & (inst["instrument_type"] == "FUT")].copy()
     fut["expiry"] = pd.to_datetime(fut["expiry"])
-    fut = fut[fut["expiry"] >= pd.Timestamp(date.today())].sort_values("expiry").iloc[0]
+
+    today_ist = datetime.now(IST).date()
+    fut = fut[fut["expiry"] >= pd.Timestamp(today_ist)].sort_values("expiry").iloc[0]
+
     return int(fut["instrument_token"]), str(fut["tradingsymbol"])
 
 
 def next_reset_915_ist(now_ist: datetime) -> datetime:
     target = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+    if now_ist >= target:
+        target += timedelta(days=1)
+    while target.weekday() >= 5:  # Sat/Sun
+        target += timedelta(days=1)
+    return target
+
+
+def next_rollcheck_914_ist(now_ist: datetime) -> datetime:
+    target = now_ist.replace(hour=9, minute=14, second=0, microsecond=0)
     if now_ist >= target:
         target += timedelta(days=1)
     while target.weekday() >= 5:  # Sat/Sun
@@ -203,6 +219,83 @@ async def stats_broadcast_loop():
         await manager.broadcast(payload)
 
 
+async def roll_to_near_month_if_needed():
+    """
+    If near-month contract changed, resubscribe KiteTicker and reset baseline/state.
+    Safe to call anytime; will no-op if unchanged.
+    """
+    global kws_client
+
+    try:
+        new_token, new_symbol = pick_near_month_nifty_fut()
+    except Exception as e:
+        await manager.broadcast({"type": "status", "msg": f"Roll-check failed: {repr(e)}"})
+        return
+
+    with state_lock:
+        old_token = state["fut_token"]
+        old_symbol = state["fut_symbol"]
+
+    if old_token == new_token:
+        return
+
+    # update state + reset baseline for the new instrument
+    now_iso = datetime.now(IST).isoformat()
+    with state_lock:
+        state["fut_token"] = new_token
+        state["fut_symbol"] = new_symbol
+
+        # clear last values (they belong to old contract)
+        state["last_price"] = None
+        state["last_oi"] = None
+
+        # reset baseline + inference
+        state["baseline_price"] = None
+        state["baseline_oi"] = None
+        state["baseline_time"] = None
+        state["dp"] = None
+        state["doi"] = None
+        state["buildup_type"] = "NO_CLEAR"
+        state["bias"] = "NEUTRAL"
+        state["speed"] = "NA"
+        state["label"] = f"Rolled to {new_symbol}. Waiting for baseline (LTP+OI after 09:15 IST)."
+
+        # optional: reset counters for clarity
+        state["tick_count"] = 0
+        state["last_tick_time"] = now_iso
+
+        tick_times.clear()
+
+    # Try to resubscribe live (if WS is connected)
+    try:
+        if kws_client is not None and old_token is not None:
+            try:
+                kws_client.unsubscribe([int(old_token)])
+            except Exception:
+                pass
+            kws_client.subscribe([int(new_token)])
+            kws_client.set_mode(kws_client.MODE_FULL, [int(new_token)])  # ensure OI
+    except Exception as e:
+        await manager.broadcast({"type": "status", "msg": f"Rolled state updated but resubscribe failed: {repr(e)}"})
+
+    await manager.broadcast({
+        "type": "status",
+        "msg": f"ROLLED: {old_symbol} -> {new_symbol} (token {old_token} -> {new_token})",
+    })
+
+
+async def roll_loop():
+    """
+    Daily roll-check at 09:14 IST (trading days).
+    This ensures that after expiry, the app rolls to the next near-month automatically.
+    """
+    while True:
+        now = datetime.now(IST)
+        nxt = next_rollcheck_914_ist(now)
+        await asyncio.sleep((nxt - now).total_seconds())
+        await roll_to_near_month_if_needed()
+
+
 def start_kite_ticker(loop: asyncio.AbstractEventLoop):
     global kws_client
     kws = KiteTicker(API_KEY, ACCESS_TOKEN)
@@ -215,6 +308,7 @@ def start_kite_ticker(loop: asyncio.AbstractEventLoop):
         with state_lock:
             token = state["fut_token"]
             sym = state["fut_symbol"]
+
         ws.subscribe([token])
         ws.set_mode(ws.MODE_FULL, [token])  # includes OI
         schedule({"type": "status", "msg": f"Subscribed: {sym} (token={token})"})
@@ -327,11 +421,12 @@ def start_kite_ticker(loop: asyncio.AbstractEventLoop):
 # -------------------- Startup/Shutdown --------------------
 @app.on_event("startup")
 async def on_startup():
-    global _started, _baseline_task, _stats_task
+    global _started, _baseline_task, _stats_task, _roll_task
     if _started:
         return
     _started = True
 
+    # pick current near-month at startup
     token, symbol = pick_near_month_nifty_fut()
     with state_lock:
         state["fut_token"] = token
@@ -340,19 +435,25 @@ async def on_startup():
     loop = asyncio.get_running_loop()
     start_kite_ticker(loop)
 
+    # start loops
     _baseline_task = asyncio.create_task(baseline_reset_loop())
     _stats_task = asyncio.create_task(stats_broadcast_loop())
+    _roll_task = asyncio.create_task(roll_loop())
+
+    # also do an immediate roll-check (safe no-op)
+    await roll_to_near_month_if_needed()
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    global kws_client, _started, _baseline_task, _stats_task
+    global kws_client, _started, _baseline_task, _stats_task, _roll_task
 
-    for t in (_baseline_task, _stats_task):
+    for t in (_baseline_task, _stats_task, _roll_task):
         if t is not None:
             t.cancel()
     _baseline_task = None
     _stats_task = None
+    _roll_task = None
 
     try:
         if kws_client is not None:
@@ -384,7 +485,7 @@ HTML = r"""
           <div class="oi-title">NIFTY Near‑Month Build‑Up</div>
           <div class="oi-sub">
             Baseline auto‑resets at <b>09:15 IST</b>. Signal uses <b>ΔPrice</b> + <b>ΔOI</b>.
-            OI updates in exchange snapshots.
+            Contract auto‑rolls daily check at <b>09:14 IST</b>.
           </div>
         </div>
 
