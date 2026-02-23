@@ -32,7 +32,7 @@ from kiteconnect import KiteConnect
 
 
 # =============================================================================
-# VOLM (Volume Shockers)  -- keep old logic as-is
+# VOLM (Cash) — ORIGINAL LOGIC (unchanged)
 # =============================================================================
 
 MIN_AVG_VOL_20 = 50_000
@@ -44,8 +44,8 @@ BREAKDOWN_PCT_TH = -0.60
 POS_NEAR_HIGH_TH = 0.80
 POS_NEAR_LOW_TH = 0.20
 
-RANGE_EXP_MULT = 1.20     # range expansion vs avg
-RANGE_CONTR_MULT = 0.90   # tight range vs avg (kept for reference)
+RANGE_EXP_MULT = 1.20
+RANGE_CONTR_MULT = 0.90
 
 TOP_N = 15
 
@@ -77,7 +77,8 @@ def _safe_float(x, default=None):
 
 def _compute_volm_df(ctx: Dict[str, Any]) -> pd.DataFrame:
     """
-    OLD VOLM DF (paced RVOL):
+    Cash-volm dataframe (paced RVOL vs 20D avg volume):
+
       RVOL = vol_today / (avg_vol_20 * time_factor)
     """
     LOCK = ctx["LOCK"]
@@ -120,7 +121,6 @@ def _compute_volm_df(ctx: Dict[str, Any]) -> pd.DataFrame:
             if avg_vol_20 is None or avg_range_20 is None:
                 continue
 
-            # Quality filters
             if avg_vol_20 < MIN_AVG_VOL_20:
                 continue
             if vol_today < MIN_TODAY_VOL:
@@ -139,7 +139,6 @@ def _compute_volm_df(ctx: Dict[str, Any]) -> pd.DataFrame:
                 pos_in_range = float(min(max(pos_in_range, 0.0), 1.0))
 
             avg_range_pct_20 = (avg_range_20 / op) * 100.0 if op > 0 else 0.0
-
             range_exp_ok = day_range_pct >= (RANGE_EXP_MULT * max(0.0001, avg_range_pct_20))
             range_tight_ok = day_range_pct <= (RANGE_CONTR_MULT * max(0.0001, avg_range_pct_20))
 
@@ -165,7 +164,7 @@ def _compute_volm_df(ctx: Dict[str, Any]) -> pd.DataFrame:
 
 def _volm_tables(ctx: Dict[str, Any]) -> Tuple[list, list, list, list, float, float]:
     """
-    OLD VOLM TABLES (unchanged):
+    Old Volm tables (unchanged):
       breakout_rows, breakdown_rows, buy_rvol_rows, sell_rvol_rows, shock_th, extreme_th
     """
     df = _compute_volm_df(ctx)
@@ -229,172 +228,324 @@ def _volm_tables(ctx: Dict[str, Any]) -> Tuple[list, list, list, list, float, fl
 
 
 # =============================================================================
-# NEW (VOLM PAGE): RVOL20 (UNPACED) Momentum + OI% column
+# FNO (FUT) — Instruments + Prev-OI seeding + FUT RVOLm20 helpers
 # =============================================================================
 
-_OI_PCT_CACHE: Dict[int, Tuple[Optional[float], float]] = {}
-_OI_PCT_TTL_SEC = 6.0
+FNO_MOVERS_TTL_SEC = float(os.getenv("FNO_MOVERS_TTL_SEC", "6"))
+FNO_PREV_OI_PACE_SEC = float(os.getenv("FNO_PREV_OI_PACE_SEC", "0.35"))
+FNO_QUOTE_CHUNK = int(os.getenv("FNO_QUOTE_CHUNK", "350"))
+
+_KITE_API_KEY = os.getenv("KITE_API_KEY", "").strip()
+_KITE_ACCESS_TOKEN = os.getenv("KITE_ACCESS_TOKEN", "").strip()
+if not _KITE_API_KEY or not _KITE_ACCESS_TOKEN:
+    raise RuntimeError("Missing KITE_API_KEY / KITE_ACCESS_TOKEN env vars (required for FNO logic).")
+
+kite_fno = KiteConnect(api_key=_KITE_API_KEY)
+kite_fno.set_access_token(_KITE_ACCESS_TOKEN)
+
+REST_LOCK = threading.Lock()
+FNO_LOCK = threading.RLock()
+
+FNO_FUT_DF: Optional[pd.DataFrame] = None
+PREV_OI_BY_EXPIRY: Dict[str, Dict[int, int]] = {}
+PREV_OI_PROGRESS: Dict[str, Dict[str, Any]] = {}
+MOVERS_CACHE: Dict[str, Tuple[dict, float]] = {}
+
+# FUT avg 20D volume cache (token -> (avg20, expires_epoch))
+FUT_AVGVOL20_CACHE: Dict[int, Tuple[Optional[float], float]] = {}
+
+
+def _chunk_list(xs: List[str], n: int):
+    for i in range(0, len(xs), n):
+        yield xs[i:i + n]
+
+
+def _quote_many(keys: List[str], chunk_size: int = FNO_QUOTE_CHUNK) -> dict:
+    out: dict = {}
+    for ch in _chunk_list(keys, chunk_size):
+        with REST_LOCK:
+            out.update(kite_fno.quote(ch))
+    return out
+
+
+def _cache_expiry_eod_ist(ist) -> float:
+    now = datetime.now(ist)
+    eod = now.replace(hour=23, minute=59, second=0, microsecond=0)
+    return eod.timestamp()
+
+
+def fut_avg_vol_20d(token: int, ist) -> Optional[float]:
+    """
+    Avg daily volume of last 20 completed sessions for this FUT token.
+    Drops today's candle if present. Requires at least 5 sessions.
+    Cached until end of day IST.
+    """
+    now = time.time()
+    cached = FUT_AVGVOL20_CACHE.get(int(token))
+    if cached and cached[1] > now:
+        return cached[0]
+
+    avg20: Optional[float]
+    try:
+        to_dt = datetime.now(ist)
+        from_dt = to_dt - timedelta(days=120)
+
+        with REST_LOCK:
+            candles = kite_fno.historical_data(
+                instrument_token=int(token),
+                from_date=from_dt,
+                to_date=to_dt,
+                interval="day",
+                continuous=False,
+                oi=False,
+            )
+
+        df = pd.DataFrame(candles or [])
+        if df.empty:
+            avg20 = None
+        else:
+            df["date"] = pd.to_datetime(df["date"])
+            df["d"] = df["date"].dt.date
+
+            today = datetime.now(ist).date()
+            if len(df) and df.iloc[-1]["d"] == today:
+                df = df.iloc[:-1].copy()
+
+            vols = pd.to_numeric(df["volume"], errors="coerce").dropna().tail(20)
+            avg20 = float(vols.mean()) if len(vols) >= 5 else None
+
+    except Exception:
+        avg20 = None
+
+    FUT_AVGVOL20_CACHE[int(token)] = (avg20, _cache_expiry_eod_ist(ist))
+    return avg20
+
+
+def _load_fno_futures_once(ctx: Dict[str, Any]) -> pd.DataFrame:
+    """Load NFO FUT instruments filtered to allowed (ctx['ALL_SYMBOLS']). Cached."""
+    global FNO_FUT_DF
+    with FNO_LOCK:
+        if FNO_FUT_DF is not None and not FNO_FUT_DF.empty:
+            return FNO_FUT_DF
+
+    with REST_LOCK:
+        df = pd.DataFrame(kite_fno.instruments("NFO"))
+
+    df = df[(df["segment"] == "NFO-FUT") & (df["instrument_type"] == "FUT")].copy()
+    df["expiry"] = pd.to_datetime(df["expiry"]).dt.date
+
+    allowed = set(ctx["ALL_SYMBOLS"])
+    if "name" in df.columns:
+        df = df[df["name"].isin(allowed)].copy()
+    else:
+        df = df.iloc[0:0].copy()
+
+    with FNO_LOCK:
+        FNO_FUT_DF = df
+    return df
+
+
+def _near_expiry_from_df(df: pd.DataFrame, ist) -> Optional[date]:
+    if df is None or df.empty:
+        return None
+    today = datetime.now(ist).date()
+    exps = sorted({e for e in df["expiry"].dropna().tolist() if e >= today})
+    return exps[0] if exps else None
+
+
+def _fetch_prevday_oi(token: int, ist) -> Optional[int]:
+    end_date = datetime.now(ist).date()
+    frm = end_date - timedelta(days=12)
+    to = end_date - timedelta(days=1)
+
+    with REST_LOCK:
+        candles = kite_fno.historical_data(
+            instrument_token=int(token),
+            from_date=frm,
+            to_date=to,
+            interval="day",
+            oi=True,
+        )
+    if not candles:
+        return None
+    oi = candles[-1].get("oi")
+    return int(oi) if oi is not None else None
+
+
+def _ensure_prev_oi_seed(ctx: Dict[str, Any], expiry_: date):
+    """Seed prev-day OI for near-month FUT tokens (paced)."""
+    expiry_s = str(expiry_)
+    df = _load_fno_futures_once(ctx)
+    tokens = [int(x) for x in df[df["expiry"] == expiry_]["instrument_token"].tolist()]
+    if not tokens:
+        return
+
+    with FNO_LOCK:
+        prog = PREV_OI_PROGRESS.get(expiry_s) or {}
+        if prog.get("running"):
+            return
+        if prog.get("done") and prog.get("total") and int(prog["done"]) >= int(prog["total"]):
+            return
+
+        PREV_OI_PROGRESS[expiry_s] = {
+            "running": True,
+            "done": 0,
+            "total": len(tokens),
+            "errors": 0,
+            "updated_at": datetime.now(ctx["IST"]).isoformat(),
+        }
+
+    def _run():
+        cache: Dict[int, int] = {}
+        done = 0
+        err = 0
+        for tok in tokens:
+            try:
+                oi_prev = _fetch_prevday_oi(tok, ctx["IST"])
+                if oi_prev is not None:
+                    cache[int(tok)] = int(oi_prev)
+            except Exception:
+                err += 1
+
+            done += 1
+            with FNO_LOCK:
+                PREV_OI_PROGRESS[expiry_s]["done"] = done
+                PREV_OI_PROGRESS[expiry_s]["errors"] = err
+                PREV_OI_PROGRESS[expiry_s]["updated_at"] = datetime.now(ctx["IST"]).isoformat()
+
+            time.sleep(FNO_PREV_OI_PACE_SEC)
+
+        with FNO_LOCK:
+            PREV_OI_BY_EXPIRY[expiry_s] = cache
+            PREV_OI_PROGRESS[expiry_s]["running"] = False
+            PREV_OI_PROGRESS[expiry_s]["updated_at"] = datetime.now(ctx["IST"]).isoformat()
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# =============================================================================
+# VOLM PAGE — FUT-based Momentum + OI%
+#   Momentum = FUT volume today / avg20 FUT daily volume   (UNPACED)
+#   OI% = FUT OI% (today vs prev-day)
+#   %Change = CASH % from open (kept)
+# =============================================================================
+
+FUT_NEAR_QUOTE_CACHE: Dict[str, Tuple[dict, float]] = {}  # expiry_str -> (quotes, expires_epoch)
+FUT_NEAR_QUOTE_TTL_SEC = float(os.getenv("FUT_NEAR_QUOTE_TTL_SEC", "6"))
 
 
 def _compute_rvol20_unpaced_df(ctx: Dict[str, Any]) -> pd.DataFrame:
     """
-    Build df with UNPACED momentum:
-      Momentum = vol_today / avg_vol_20  (no time-factor)
+    FUT-based momentum for Volm page (unpaced):
+
+      Momentum(20D) = FUT volume today / avg20 FUT daily volume
+
+    Uses near-month FUT.
+    Keeps %Change from CASH open -> CASH LTP for the same symbol.
+
+    Returns columns:
+      Symbol, %Change, Momentum, OI%
     """
-    LOCK = ctx["LOCK"]
+    IST = ctx["IST"]
     ALL_SYMBOLS = ctx["ALL_SYMBOLS"]
     symbol_to_token = ctx["symbol_to_token"]
-    DAILY_STATS = ctx["DAILY_STATS"]
     get_live_or_eod_state = ctx["get_live_or_eod_state"]
+    LOCK = ctx["LOCK"]
+
+    futdf = _load_fno_futures_once(ctx)
+    near = _near_expiry_from_df(futdf, IST) if futdf is not None else None
+    if not near:
+        return pd.DataFrame()
+
+    dfe = futdf[futdf["expiry"] == near].copy()
+    if dfe.empty:
+        return pd.DataFrame()
+
+    # Start/continue prev-OI seed so OI% can appear
+    _ensure_prev_oi_seed(ctx, near)
+    expiry_s = str(near)
+
+    with FNO_LOCK:
+        prev_oi_map = dict(PREV_OI_BY_EXPIRY.get(expiry_s) or {})
+
+    # Cached near-month quotes
+    now = time.time()
+    cached = FUT_NEAR_QUOTE_CACHE.get(expiry_s)
+    if cached and cached[1] > now:
+        q = cached[0]
+    else:
+        keys = ["NFO:" + s for s in dfe["tradingsymbol"].astype(str).tolist()]
+        q = _quote_many(keys, chunk_size=FNO_QUOTE_CHUNK)
+        FUT_NEAR_QUOTE_CACHE[expiry_s] = (q, now + FUT_NEAR_QUOTE_TTL_SEC)
+
+    u2fut_token: Dict[str, int] = dict(zip(dfe["name"].astype(str), dfe["instrument_token"].astype(int)))
+    u2fut_sym: Dict[str, str] = dict(zip(dfe["name"].astype(str), dfe["tradingsymbol"].astype(str)))
 
     rows = []
     with LOCK:
         for sym in ALL_SYMBOLS:
-            tok = symbol_to_token.get(sym)
-            if not tok:
+            cash_token = symbol_to_token.get(sym)
+            if not cash_token:
                 continue
 
-            st = DAILY_STATS.get(tok) or {}
-            avg_vol_20 = _safe_float(st.get("avg_vol_20"))
-            if avg_vol_20 is None:
+            st = get_live_or_eod_state(cash_token)
+            if not st:
                 continue
 
-            state = get_live_or_eod_state(tok)
-            if not state:
-                continue
-
-            ltp, vol_today, ohlc = state
+            ltp, _vol_cash, ohlc = st
+            op = _safe_float((ohlc or {}).get("open"))
             ltp = _safe_float(ltp)
-            vol_today = _safe_float(vol_today)
-
-            op = _safe_float(ohlc.get("open"))
-            hi = _safe_float(ohlc.get("high"))
-            lo = _safe_float(ohlc.get("low"))
-
-            if ltp is None or vol_today is None or op is None or op <= 0:
-                continue
-            if hi is None or lo is None:
-                continue
-
-            # same quality filters as volm
-            if avg_vol_20 < MIN_AVG_VOL_20:
-                continue
-            if vol_today < MIN_TODAY_VOL:
+            if op is None or op <= 0 or ltp is None or ltp <= 0:
                 continue
             if ltp < MIN_LTP:
                 continue
 
             pct_open = (ltp - op) / op * 100.0
-            momentum = float(vol_today) / (float(avg_vol_20) + 1e-9)
+
+            fut_token = u2fut_token.get(sym)
+            fut_tsym = u2fut_sym.get(sym)
+            if not fut_token or not fut_tsym:
+                continue
+
+            v = q.get("NFO:" + fut_tsym) or {}
+            fut_vol = v.get("volume")
+            fut_oi_now = v.get("oi")
+
+            if fut_vol is None:
+                continue
+
+            avg20_fut = fut_avg_vol_20d(int(fut_token), IST)
+            if not avg20_fut or avg20_fut <= 0:
+                continue
+
+            momentum = float(fut_vol) / (float(avg20_fut) + 1e-9)
+
+            oi_pct = None
+            oi_prev = prev_oi_map.get(int(fut_token))
+            if fut_oi_now is not None and oi_prev is not None and int(oi_prev) != 0:
+                try:
+                    oi_chg = int(int(fut_oi_now) - int(oi_prev))
+                    oi_pct = (float(oi_chg) / float(int(oi_prev))) * 100.0
+                except Exception:
+                    oi_pct = None
 
             rows.append(
                 {
                     "Symbol": sym,
                     "%Change": round(float(pct_open), 2),
                     "Momentum": float(momentum),
-                    "_tok": int(tok),
+                    "OI%": (round(float(oi_pct), 2) if oi_pct is not None else None),
                 }
             )
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
-def _oi_pct_for_underlyings(ctx: Dict[str, Any], underlyings: List[str]) -> Dict[str, Optional[float]]:
-    """
-    For a list of NSE cash symbols, compute FUT OI% (near expiry) if available.
-    Returns mapping: underlying -> oi_pct (float) or None.
-    """
-    if not underlyings:
-        return {}
-
-    # Load FUT universe (filtered to allowed symbols)
-    futdf = _load_fno_futures_once(ctx)
-    if futdf is None or futdf.empty:
-        return {s: None for s in underlyings}
-
-    near = _near_expiry_from_df(futdf, ctx["IST"])
-    if not near:
-        return {s: None for s in underlyings}
-
-    dfe = futdf[futdf["expiry"] == near].copy()
-    if dfe.empty:
-        return {s: None for s in underlyings}
-
-    # Ensure prev OI seeding is running (or done) for that expiry
-    _ensure_prev_oi_seed(ctx, near)
-
-    expiry_s = str(near)
-    with FNO_LOCK:
-        prev_oi_map = dict(PREV_OI_BY_EXPIRY.get(expiry_s) or {})
-
-    # Map underlying -> (contract, fut_token)
-    dfe = dfe[dfe["name"].isin(set(underlyings))].copy()
-    if dfe.empty:
-        return {s: None for s in underlyings}
-
-    u2contract = dict(zip(dfe["name"].astype(str), dfe["tradingsymbol"].astype(str)))
-    u2token = dict(zip(dfe["name"].astype(str), dfe["instrument_token"].astype(int)))
-
-    # Use cache per FUT token (short TTL)
-    now = time.time()
-    out: Dict[str, Optional[float]] = {}
-    need_quote: List[str] = []
-    need_under: List[str] = []
-
-    for u in underlyings:
-        tok = u2token.get(u)
-        if not tok:
-            out[u] = None
-            continue
-
-        cached = _OI_PCT_CACHE.get(int(tok))
-        if cached and cached[1] > now:
-            out[u] = cached[0]
-            continue
-
-        c = u2contract.get(u)
-        if not c:
-            out[u] = None
-            continue
-
-        need_quote.append("NFO:" + c)
-        need_under.append(u)
-
-    if need_quote:
-        q = _quote_many(need_quote, chunk_size=FNO_QUOTE_CHUNK)
-
-        for u, key in zip(need_under, need_quote):
-            tok = int(u2token.get(u) or 0)
-            v = q.get(key) or {}
-            oi_now = v.get("oi")
-            oi_prev = prev_oi_map.get(tok)
-
-            oi_pct = None
-            if oi_now is not None and oi_prev is not None and int(oi_prev) != 0:
-                try:
-                    oi_chg = int(int(oi_now) - int(oi_prev))
-                    oi_pct = (float(oi_chg) / float(int(oi_prev))) * 100.0
-                except Exception:
-                    oi_pct = None
-
-            out[u] = oi_pct
-            _OI_PCT_CACHE[tok] = (oi_pct, now + _OI_PCT_TTL_SEC)
-
-    # fill any missing
-    for u in underlyings:
-        out.setdefault(u, None)
-
-    return out
-
-
 def _rvol20_momentum_tables(ctx: Dict[str, Any], top_n: int = 15) -> Tuple[list, list]:
     """
-    NEW tables on Volm page:
-
-      RVOL20 Momentum (UNPACED) + OI%
-
-    Momentum = vol_today / avg_vol_20 (unpaced)
-    OI% = near-month FUT OI% (prev-day OI -> current OI), if available.
+    Volm page Momentum tables (FUT volume based):
+      - Gainers: %Change > 0, sorted by Momentum desc
+      - Losers:  %Change < 0, sorted by Momentum desc
     """
     df = _compute_rvol20_unpaced_df(ctx)
     if df.empty:
@@ -406,24 +557,29 @@ def _rvol20_momentum_tables(ctx: Dict[str, Any], top_n: int = 15) -> Tuple[list,
     if df.empty:
         return [], []
 
-    gainers_df = df[df["%Change"] > 0].sort_values("Momentum", ascending=False).head(int(top_n)).copy()
-    losers_df = df[df["%Change"] < 0].sort_values("Momentum", ascending=False).head(int(top_n)).copy()
+    gainers = (
+        df[df["%Change"] > 0]
+        .sort_values("Momentum", ascending=False)
+        .head(int(top_n))
+        .copy()
+    )
+    losers = (
+        df[df["%Change"] < 0]
+        .sort_values("Momentum", ascending=False)
+        .head(int(top_n))
+        .copy()
+    )
 
-    # fetch OI% only for the displayed symbols (small set)
-    symbols_needed = list(dict.fromkeys(gainers_df["Symbol"].tolist() + losers_df["Symbol"].tolist()))
-    oi_map = _oi_pct_for_underlyings(ctx, symbols_needed)
+    gainers["Momentum"] = gainers["Momentum"].astype(float).round(2)
+    losers["Momentum"] = losers["Momentum"].astype(float).round(2)
 
-    def _attach(d: pd.DataFrame) -> List[dict]:
-        if d.empty:
-            return []
-        d["Momentum"] = d["Momentum"].astype(float).round(2)
-        d["OI%"] = d["Symbol"].map(oi_map)
-        d["OI%"] = pd.to_numeric(d["OI%"], errors="coerce").round(2)
-        # keep None instead of NaN
-        d["OI%"] = d["OI%"].where(pd.notnull(d["OI%"]), None)
-        return d[["Symbol", "%Change", "Momentum", "OI%"]].to_dict("records")
+    gainers["OI%"] = gainers["OI%"].where(pd.notnull(gainers["OI%"]), None)
+    losers["OI%"] = losers["OI%"].where(pd.notnull(losers["OI%"]), None)
 
-    return _attach(gainers_df), _attach(losers_df)
+    return (
+        gainers[["Symbol", "%Change", "Momentum", "OI%"]].to_dict("records"),
+        losers[["Symbol", "%Change", "Momentum", "OI%"]].to_dict("records"),
+    )
 
 
 # =============================================================================
@@ -431,7 +587,7 @@ def _rvol20_momentum_tables(ctx: Dict[str, Any], top_n: int = 15) -> Tuple[list,
 # =============================================================================
 
 def volm_page(BASE: str):
-    # Existing Volm tables columns (unchanged)
+    # Existing Volm tables (unchanged)
     cols = [
         {
             "colId": "stock",
@@ -479,7 +635,7 @@ def volm_page(BASE: str):
         },
     ]
 
-    # NEW momentum tables columns: Symbol | %Change | Momentum | OI%
+    # FUT-based Momentum tables: Symbol | %Change | Momentum | OI%
     pct_fmt = {
         "function": (
             "params.value==null ? '—' : "
@@ -490,7 +646,8 @@ def volm_page(BASE: str):
         "function": (
             "params.value==null ? {} : "
             "(Number(params.value)>0 ? {color:'var(--good)', fontWeight:'800'} : "
-            "(Number(params.value)<0 ? {color:'var(--bad)', fontWeight:'800'} : {color:'rgba(255,255,255,0.9)', fontWeight:'800'}))"
+            "(Number(params.value)<0 ? {color:'var(--bad)', fontWeight:'800'} : "
+            "{color:'rgba(255,255,255,0.9)', fontWeight:'800'}))"
         )
     }
 
@@ -519,15 +676,15 @@ def volm_page(BASE: str):
         {
             "colId": "mom",
             "field": "Momentum",
-            "headerName": "MOMENTUM (20D)",
+            "headerName": "MOMENTUM (FUT 20D)",
             "type": "rightAligned",
-            "minWidth": 165,
-            "maxWidth": 185,
+            "minWidth": 185,
+            "maxWidth": 205,
             "suppressSizeToFit": True,
             "headerClass": "ag-right-aligned-header h-right",
             "cellClass": "ag-right-aligned-cell cell-num c-right",
             "valueFormatter": {"function": "params.value==null ? '—' : (Number(params.value).toFixed(2) + 'x')"},
-            # white + bold (as requested)
+            # white + bold (no green)
             "cellStyle": {"function": "params.value==null ? {} : ({color:'rgba(255,255,255,0.92)', fontWeight:'800'})"},
         },
         {
@@ -586,19 +743,19 @@ def volm_page(BASE: str):
             ),
             html.Div(id="volm-thresholds", className="hint", style={"marginBottom": "10px"}),
 
-            # NEW: RVOL20 (UNPACED) Momentum + OI%
+            # NEW: FUT-based Momentum + OI%
             dbc.Row(
                 [
                     dbc.Col(
                         [
-                            html.H6("RVOL20 Momentum (Unpaced) — Gainers", className="mt-1"),
+                            html.H6("RVOL20 Momentum (FUT Unpaced) — Gainers", className="mt-1"),
                             grid("volm-mom-gainers", mom_cols, height=GRID_10ROWS_HEIGHT),
                         ],
                         md=6,
                     ),
                     dbc.Col(
                         [
-                            html.H6("RVOL20 Momentum (Unpaced) — Losers", className="mt-1"),
+                            html.H6("RVOL20 Momentum (FUT Unpaced) — Losers", className="mt-1"),
                             grid("volm-mom-losers", mom_cols, height=GRID_10ROWS_HEIGHT),
                         ],
                         md=6,
@@ -609,7 +766,7 @@ def volm_page(BASE: str):
 
             html.Hr(),
 
-            # OLD: BUY / SELL RVOL
+            # OLD: BUY / SELL RVOL (unchanged)
             dbc.Row(
                 [
                     dbc.Col(
@@ -632,7 +789,7 @@ def volm_page(BASE: str):
 
             html.Hr(),
 
-            # OLD: BREAKOUT / BREAKDOWN shockers
+            # OLD: BREAKOUT / BREAKDOWN (unchanged)
             dbc.Row(
                 [
                     dbc.Col([html.H6("Breakout Vol Shockers", className="mt-1"), grid("volm-breakout", cols)], md=6),
@@ -660,297 +817,18 @@ def register_volm(dash_app, BASE: str, ctx: Dict[str, Any]) -> None:
     def _update_volm(_n):
         try:
             mom_g, mom_l = _rvol20_momentum_tables(ctx, top_n=15)
-
             b1, b2, buy15, sell15, th_shock, th_extreme = _volm_tables(ctx)
+
             now_txt = datetime.now(ctx["IST"]).strftime("%H:%M:%S")
             hint = f"[{now_txt}] Thresholds (dynamic): Shock RVOL ≥ {th_shock:.2f} | Extreme RVOL ≥ {th_extreme:.2f}"
-
             return mom_g, mom_l, b1, b2, buy15, sell15, hint
         except Exception:
             return [], [], [], [], [], [], "Volm loading…"
 
 
 # =============================================================================
-# F&O MOVERS (FUT) — Top Gainers / Losers / All
+# FNO MOVERS PAGE (existing)
 # =============================================================================
-
-FNO_MOVERS_TTL_SEC = float(os.getenv("FNO_MOVERS_TTL_SEC", "6"))
-FNO_PREV_OI_PACE_SEC = float(os.getenv("FNO_PREV_OI_PACE_SEC", "0.35"))
-FNO_QUOTE_CHUNK = int(os.getenv("FNO_QUOTE_CHUNK", "350"))
-FNO_MOVERS_TOP_N = int(os.getenv("FNO_MOVERS_TOP_N", "15"))
-
-_KITE_API_KEY = os.getenv("KITE_API_KEY", "").strip()
-_KITE_ACCESS_TOKEN = os.getenv("KITE_ACCESS_TOKEN", "").strip()
-if not _KITE_API_KEY or not _KITE_ACCESS_TOKEN:
-    raise RuntimeError("Missing KITE_API_KEY / KITE_ACCESS_TOKEN env vars (required for FNO movers).")
-
-kite_fno = KiteConnect(api_key=_KITE_API_KEY)
-kite_fno.set_access_token(_KITE_ACCESS_TOKEN)
-
-REST_LOCK = threading.Lock()
-FNO_LOCK = threading.RLock()
-
-FNO_FUT_DF: Optional[pd.DataFrame] = None
-PREV_OI_BY_EXPIRY: Dict[str, Dict[int, int]] = {}
-PREV_OI_PROGRESS: Dict[str, Dict[str, Any]] = {}
-MOVERS_CACHE: Dict[str, Tuple[dict, float]] = {}
-
-
-def _chunk_list(xs: List[str], n: int):
-    for i in range(0, len(xs), n):
-        yield xs[i:i + n]
-
-
-def _quote_many(keys: List[str], chunk_size: int = FNO_QUOTE_CHUNK) -> dict:
-    out: dict = {}
-    for ch in _chunk_list(keys, chunk_size):
-        with REST_LOCK:
-            out.update(kite_fno.quote(ch))
-    return out
-
-
-def _load_fno_futures_once(ctx: Dict[str, Any]) -> pd.DataFrame:
-    """Load NFO FUT instruments filtered to your Dash universe (ctx['ALL_SYMBOLS'])."""
-    global FNO_FUT_DF
-    with FNO_LOCK:
-        if FNO_FUT_DF is not None and not FNO_FUT_DF.empty:
-            return FNO_FUT_DF
-
-    with REST_LOCK:
-        df = pd.DataFrame(kite_fno.instruments("NFO"))
-
-    df = df[(df["segment"] == "NFO-FUT") & (df["instrument_type"] == "FUT")].copy()
-    df["expiry"] = pd.to_datetime(df["expiry"]).dt.date
-
-    allowed = set(ctx["ALL_SYMBOLS"])
-    if "name" in df.columns:
-        df = df[df["name"].isin(allowed)].copy()
-    else:
-        df = df.iloc[0:0].copy()
-
-    with FNO_LOCK:
-        FNO_FUT_DF = df
-
-    return df
-
-
-def _near_expiry_from_df(df: pd.DataFrame, ist) -> Optional[date]:
-    if df is None or df.empty:
-        return None
-    today = datetime.now(ist).date()
-    exps = sorted({e for e in df["expiry"].dropna().tolist() if e >= today})
-    return exps[0] if exps else None
-
-
-def _fetch_prevday_oi(token: int, ist) -> Optional[int]:
-    end_date = datetime.now(ist).date()
-    frm = end_date - timedelta(days=12)
-    to = end_date - timedelta(days=1)
-
-    with REST_LOCK:
-        candles = kite_fno.historical_data(
-            instrument_token=int(token),
-            from_date=frm,
-            to_date=to,
-            interval="day",
-            oi=True,
-        )
-
-    if not candles:
-        return None
-    oi = candles[-1].get("oi")
-    return int(oi) if oi is not None else None
-
-
-def _build_up_label(price_change: float, oi_change: Optional[int]) -> str:
-    if oi_change is None:
-        return "NO CLEAR"
-    if price_change > 0 and oi_change > 0:
-        return "LONG BUILDUP"
-    if price_change < 0 and oi_change > 0:
-        return "SHORT BUILDUP"
-    if price_change > 0 and oi_change < 0:
-        return "SHORT COVERING"
-    if price_change < 0 and oi_change < 0:
-        return "LONG UNWINDING"
-    return "NO CLEAR"
-
-
-def _ensure_prev_oi_seed(ctx: Dict[str, Any], expiry_: date):
-    """Background seed prev-day OI for all FUT tokens of this expiry (paced)."""
-    expiry_s = str(expiry_)
-    df = _load_fno_futures_once(ctx)
-    tokens = [int(x) for x in df[df["expiry"] == expiry_]["instrument_token"].tolist()]
-
-    with FNO_LOCK:
-        prog = PREV_OI_PROGRESS.get(expiry_s) or {}
-        if prog.get("running"):
-            return
-        if prog.get("done") and prog.get("total") and int(prog["done"]) >= int(prog["total"]):
-            return
-
-        PREV_OI_PROGRESS[expiry_s] = {
-            "running": True,
-            "done": 0,
-            "total": len(tokens),
-            "errors": 0,
-            "updated_at": datetime.now(ctx["IST"]).isoformat(),
-        }
-
-    def _run():
-        cache: Dict[int, int] = {}
-        done = 0
-        err = 0
-        for tok in tokens:
-            try:
-                oi_prev = _fetch_prevday_oi(tok, ctx["IST"])
-                if oi_prev is not None:
-                    cache[int(tok)] = int(oi_prev)
-            except Exception:
-                err += 1
-
-            done += 1
-            with FNO_LOCK:
-                PREV_OI_PROGRESS[expiry_s]["done"] = done
-                PREV_OI_PROGRESS[expiry_s]["errors"] = err
-                PREV_OI_PROGRESS[expiry_s]["updated_at"] = datetime.now(ctx["IST"]).isoformat()
-
-            time.sleep(FNO_PREV_OI_PACE_SEC)
-
-        with FNO_LOCK:
-            PREV_OI_BY_EXPIRY[expiry_s] = cache
-            PREV_OI_PROGRESS[expiry_s]["running"] = False
-            PREV_OI_PROGRESS[expiry_s]["updated_at"] = datetime.now(ctx["IST"]).isoformat()
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
-def _rows_for_expiry(ctx: Dict[str, Any], expiry_: date) -> Tuple[List[dict], Dict[str, Any]]:
-    df = _load_fno_futures_once(ctx)
-    dfe = df[df["expiry"] == expiry_].copy()
-    if dfe.empty:
-        return [], {}
-
-    _ensure_prev_oi_seed(ctx, expiry_)
-
-    keys = ["NFO:" + s for s in dfe["tradingsymbol"].tolist()]
-    q = _quote_many(keys, chunk_size=FNO_QUOTE_CHUNK)
-
-    expiry_s = str(expiry_)
-    with FNO_LOCK:
-        prev_oi_map = dict(PREV_OI_BY_EXPIRY.get(expiry_s) or {})
-        prog = dict(PREV_OI_PROGRESS.get(expiry_s) or {})
-
-    rows: List[dict] = []
-    for _, r in dfe.iterrows():
-        tsym = str(r["tradingsymbol"])
-        v = q.get("NFO:" + tsym) or {}
-
-        ltp = v.get("last_price")
-        ohlc = v.get("ohlc") or {}
-        prev_close = ohlc.get("close")
-        vol = v.get("volume")
-        oi = v.get("oi")
-
-        if ltp is None or prev_close is None:
-            continue
-
-        try:
-            ltp_f = float(ltp)
-            prev_close_f = float(prev_close)
-        except Exception:
-            continue
-        if prev_close_f == 0:
-            continue
-
-        price_chg = ltp_f - prev_close_f
-        price_pct = (price_chg / prev_close_f) * 100.0
-
-        tok = int(r["instrument_token"])
-        oi_prev = prev_oi_map.get(tok)
-
-        oi_pct = None
-        build_up = "NO CLEAR"
-        if oi is not None and oi_prev is not None and int(oi_prev) != 0:
-            try:
-                oi_now = int(oi)
-                oi_prev_i = int(oi_prev)
-                oi_chg = int(oi_now - oi_prev_i)
-                oi_pct = (float(oi_chg) / float(oi_prev_i)) * 100.0
-                build_up = _build_up_label(price_chg, oi_chg)
-            except Exception:
-                oi_pct = None
-                build_up = "NO CLEAR"
-
-        underlying = str(r.get("name") or "")
-        rows.append(
-            {
-                "Symbol": underlying if underlying else tsym,
-                "Contract": tsym,
-                "Price": round(ltp_f, 2),
-                "%Chg": round(price_pct, 2),
-                "Contracts": int(vol or 0),
-                "OI%": (round(float(oi_pct), 2) if oi_pct is not None else None),
-                "BuildUp": build_up,
-            }
-        )
-
-    return rows, prog
-
-
-def compute_fno_movers_payload(ctx: Dict[str, Any], expiry_: date, top_n: int = FNO_MOVERS_TOP_N) -> dict:
-    cache_key = f"{expiry_}:{int(top_n)}"
-    now = time.time()
-
-    with FNO_LOCK:
-        cached = MOVERS_CACHE.get(cache_key)
-        if cached and cached[1] > now:
-            return cached[0]
-
-    rows, prog = _rows_for_expiry(ctx, expiry_)
-    if not rows:
-        payload = {
-            "expiry": str(expiry_),
-            "updated_at": datetime.now(ctx["IST"]).isoformat(),
-            "rows": [],
-            "gainers": [],
-            "losers": [],
-            "prev_oi_progress": prog,
-        }
-        with FNO_LOCK:
-            MOVERS_CACHE[cache_key] = (payload, now + FNO_MOVERS_TTL_SEC)
-        return payload
-
-    dfr = pd.DataFrame(rows)
-
-    full_sorted = dfr.sort_values(["Contracts", "%Chg"], ascending=[False, False]).to_dict("records")
-    gainers = (
-        dfr[dfr["%Chg"] > 0]
-        .sort_values(["Contracts", "%Chg"], ascending=[False, False])
-        .head(int(top_n))
-        .to_dict("records")
-    )
-    losers = (
-        dfr[dfr["%Chg"] < 0]
-        .sort_values(["Contracts", "%Chg"], ascending=[False, True])
-        .head(int(top_n))
-        .to_dict("records")
-    )
-
-    payload = {
-        "expiry": str(expiry_),
-        "updated_at": datetime.now(ctx["IST"]).isoformat(),
-        "rows": full_sorted,
-        "gainers": gainers,
-        "losers": losers,
-        "prev_oi_progress": prog,
-    }
-
-    with FNO_LOCK:
-        MOVERS_CACHE[cache_key] = (payload, now + FNO_MOVERS_TTL_SEC)
-
-    return payload
-
 
 def fno_movers_page(BASE: str):
     pct_fmt = {
@@ -980,7 +858,11 @@ def fno_movers_page(BASE: str):
         {"field": "OI%", "headerName": "OI%", "type": "rightAligned", "minWidth": 100, "valueFormatter": pct_fmt, "cellStyle": signed_color},
     ]
 
+    # Note: FUT_RVOLm20 is computed elsewhere (if you want it visible, add column here too)
     all_coldefs = top_coldefs + [
+        {"field": "FUT_RVOLm20", "headerName": "FUT RVOLm20", "type": "rightAligned", "minWidth": 130, "maxWidth": 150,
+         "valueFormatter": {"function": "params.value==null ? '—' : (Number(params.value).toFixed(2) + 'x')"},
+         "cellStyle": {"function": "params.value==null ? {} : ({color:'rgba(255,255,255,0.92)', fontWeight:'800'})"}},
         {"field": "BuildUp", "headerName": "BUILD UP", "minWidth": 170, "flex": 1},
         {"field": "Contract", "headerName": "CONTRACT", "minWidth": 190, "flex": 1},
         {"field": "Price", "headerName": "PRICE", "type": "rightAligned", "minWidth": 110,
@@ -1016,8 +898,14 @@ def fno_movers_page(BASE: str):
 
             dbc.Row(
                 [
-                    dbc.Col(html.Div([html.Div("F&O MOVERS", className="fno-title-kicker")], className="fno-title-wrap"), width=True),
-                    dbc.Col(dbc.Button("Back", href=f"{BASE}", color="secondary", outline=True, className="btn-back"), width="auto"),
+                    dbc.Col(
+                        html.Div([html.Div("F&O MOVERS", className="fno-title-kicker")], className="fno-title-wrap"),
+                        width=True,
+                    ),
+                    dbc.Col(
+                        dbc.Button("Back", href=f"{BASE}", color="secondary", outline=True, className="btn-back"),
+                        width="auto",
+                    ),
                 ],
                 className="align-items-center g-2",
             ),
@@ -1047,10 +935,20 @@ def fno_movers_page(BASE: str):
 
             dbc.Row(
                 [
-                    dbc.Col([html.H6("Top Gainers (30 rows, scroll)", className="mt-1 fno-section-title"),
-                             grid("fno_gainers_grid", top_coldefs, TOP_GRID_HEIGHT)], md=6),
-                    dbc.Col([html.H6("Top Losers (30 rows, scroll)", className="mt-1 fno-section-title"),
-                             grid("fno_losers_grid", top_coldefs, TOP_GRID_HEIGHT)], md=6),
+                    dbc.Col(
+                        [
+                            html.H6("Top Gainers (30 rows, scroll)", className="mt-1 fno-section-title"),
+                            grid("fno_gainers_grid", top_coldefs, TOP_GRID_HEIGHT),
+                        ],
+                        md=6,
+                    ),
+                    dbc.Col(
+                        [
+                            html.H6("Top Losers (30 rows, scroll)", className="mt-1 fno-section-title"),
+                            grid("fno_losers_grid", top_coldefs, TOP_GRID_HEIGHT),
+                        ],
+                        md=6,
+                    ),
                 ],
                 className="g-2",
             ),
@@ -1124,8 +1022,10 @@ def register_fno_movers(dash_app, BASE: str, ctx: Dict[str, Any]) -> None:
         except Exception:
             return [], [], [], "Invalid expiry", "—"
 
-        payload = compute_fno_movers_payload(ctx, exp, top_n=30)
+        # Build movers payload (30 rows so top grids show 15 and scroll for rest)
+        payload = _compute_fno_movers_payload_internal(ctx, exp, top_n=30)
 
+        # Seed status pill
         prog = payload.get("prev_oi_progress") or {}
         running = bool(prog.get("running"))
         done = int(prog.get("done") or 0)
@@ -1161,3 +1061,171 @@ def register_fno_movers(dash_app, BASE: str, ctx: Dict[str, Any]) -> None:
             seed_children,
             updated_children,
         )
+
+
+# =============================================================================
+# Internal FNO movers payload builder (kept at bottom so functions above can call it)
+# =============================================================================
+
+def _compute_fno_movers_payload_internal(ctx: Dict[str, Any], expiry_: date, top_n: int = 30) -> dict:
+    """
+    Returns dict:
+      expiry, updated_at, rows, gainers, losers, prev_oi_progress
+    rows contain:
+      Symbol, Contract, Price, %Chg, Contracts, OI%, FUT_RVOLm20, BuildUp
+    """
+    cache_key = f"{expiry_}:{int(top_n)}"
+    now = time.time()
+
+    with FNO_LOCK:
+        cached = MOVERS_CACHE.get(cache_key)
+        if cached and cached[1] > now:
+            return cached[0]
+
+    df = _load_fno_futures_once(ctx)
+    dfe = df[df["expiry"] == expiry_].copy()
+    if dfe.empty:
+        payload = {
+            "expiry": str(expiry_),
+            "updated_at": datetime.now(ctx["IST"]).isoformat(),
+            "rows": [],
+            "gainers": [],
+            "losers": [],
+            "prev_oi_progress": {},
+            "note": "No FUT rows for this expiry.",
+        }
+        with FNO_LOCK:
+            MOVERS_CACHE[cache_key] = (payload, now + FNO_MOVERS_TTL_SEC)
+        return payload
+
+    _ensure_prev_oi_seed(ctx, expiry_)
+
+    expiry_s = str(expiry_)
+    with FNO_LOCK:
+        prev_oi_map = dict(PREV_OI_BY_EXPIRY.get(expiry_s) or {})
+        prog = dict(PREV_OI_PROGRESS.get(expiry_s) or {})
+
+    keys = ["NFO:" + s for s in dfe["tradingsymbol"].astype(str).tolist()]
+    q = _quote_many(keys, chunk_size=FNO_QUOTE_CHUNK)
+
+    # paced factor for FUT_RVOLm20
+    tf = _time_factor_ist(datetime.now(ctx["IST"]))  # reuse cash TF function; same session times
+
+    rows: List[dict] = []
+    for _, r in dfe.iterrows():
+        tsym = str(r["tradingsymbol"])
+        v = q.get("NFO:" + tsym) or {}
+
+        ltp = v.get("last_price")
+        ohlc = v.get("ohlc") or {}
+        prev_close = ohlc.get("close")
+        vol = v.get("volume")
+        oi = v.get("oi")
+
+        if ltp is None or prev_close is None:
+            continue
+
+        try:
+            ltp_f = float(ltp)
+            prev_close_f = float(prev_close)
+        except Exception:
+            continue
+        if prev_close_f == 0:
+            continue
+
+        price_chg = ltp_f - prev_close_f
+        price_pct = (price_chg / prev_close_f) * 100.0
+
+        fut_token = int(r["instrument_token"])
+        oi_prev = prev_oi_map.get(fut_token)
+
+        oi_pct = None
+        buildup = "NO CLEAR"
+        if oi is not None and oi_prev is not None and int(oi_prev) != 0:
+            try:
+                oi_now = int(oi)
+                oi_prev_i = int(oi_prev)
+                oi_chg = int(oi_now - oi_prev_i)
+                oi_pct = (float(oi_chg) / float(oi_prev_i)) * 100.0
+                # build-up label
+                if price_chg > 0 and oi_chg > 0:
+                    buildup = "LONG BUILDUP"
+                elif price_chg < 0 and oi_chg > 0:
+                    buildup = "SHORT BUILDUP"
+                elif price_chg > 0 and oi_chg < 0:
+                    buildup = "SHORT COVERING"
+                elif price_chg < 0 and oi_chg < 0:
+                    buildup = "LONG UNWINDING"
+                else:
+                    buildup = "NO CLEAR"
+            except Exception:
+                oi_pct = None
+                buildup = "NO CLEAR"
+
+        # FUT_RVOLm20 (paced) = FUT volume / (avg20 * tf)
+        fut_rvolm20 = None
+        try:
+            avg20 = fut_avg_vol_20d(fut_token, ctx["IST"])
+            if avg20 and avg20 > 0 and vol is not None:
+                expected = float(avg20) * float(tf)
+                fut_rvolm20 = float(vol) / (expected + 1e-9)
+        except Exception:
+            fut_rvolm20 = None
+
+        underlying = str(r.get("name") or "")
+        rows.append(
+            {
+                "Symbol": underlying if underlying else tsym,
+                "Contract": tsym,
+                "Price": round(ltp_f, 2),
+                "%Chg": round(price_pct, 2),
+                "Contracts": int(vol or 0),
+                "OI%": (round(float(oi_pct), 2) if oi_pct is not None else None),
+                "FUT_RVOLm20": (round(float(fut_rvolm20), 2) if fut_rvolm20 is not None else None),
+                "BuildUp": buildup,
+            }
+        )
+
+    if not rows:
+        payload = {
+            "expiry": str(expiry_),
+            "updated_at": datetime.now(ctx["IST"]).isoformat(),
+            "rows": [],
+            "gainers": [],
+            "losers": [],
+            "prev_oi_progress": prog,
+            "note": "No quote rows yet.",
+        }
+        with FNO_LOCK:
+            MOVERS_CACHE[cache_key] = (payload, now + FNO_MOVERS_TTL_SEC)
+        return payload
+
+    dfr = pd.DataFrame(rows)
+
+    full_sorted = dfr.sort_values(["Contracts", "%Chg"], ascending=[False, False]).to_dict("records")
+    gainers = (
+        dfr[dfr["%Chg"] > 0]
+        .sort_values(["Contracts", "%Chg"], ascending=[False, False])
+        .head(int(top_n))
+        .to_dict("records")
+    )
+    losers = (
+        dfr[dfr["%Chg"] < 0]
+        .sort_values(["Contracts", "%Chg"], ascending=[False, True])
+        .head(int(top_n))
+        .to_dict("records")
+    )
+
+    payload = {
+        "expiry": str(expiry_),
+        "updated_at": datetime.now(ctx["IST"]).isoformat(),
+        "rows": full_sorted,
+        "gainers": gainers,
+        "losers": losers,
+        "prev_oi_progress": prog,
+    }
+
+    with FNO_LOCK:
+        MOVERS_CACHE[cache_key] = (payload, now + FNO_MOVERS_TTL_SEC)
+
+    return payload
