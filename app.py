@@ -33,7 +33,6 @@ import dash
 from dash import dcc, html, Input, Output
 import dash_bootstrap_components as dbc
 import dash_ag_grid as dag
-import fnoseed
 
 from kiteconnect import KiteConnect, KiteTicker
 
@@ -42,6 +41,9 @@ import web
 
 # OpenInterest FastAPI app (mounted)
 import optioninterest as openinterest
+
+# FNO prev-OI seed module
+import fnoseed
 
 
 # =============================================================================
@@ -63,12 +65,18 @@ if not API_KEY or not ACCESS_TOKEN:
     raise RuntimeError("Missing KITE_API_KEY / KITE_ACCESS_TOKEN environment variables.")
 
 SEED_SLEEP_SEC = float(os.getenv("SEED_SLEEP_SEC", "0.35"))
-
 LOOKBACK_SESSIONS = 20
 
-HOT_WINDOW_SEC = 15 * 60
+# Hot Now window
+HOT_WINDOW_SEC = 5 * 60
 HOT_SAMPLE_SEC = 5
-HOT_HISTORY_MAX_SEC = HOT_WINDOW_SEC + 5 * 60
+HOT_HISTORY_MAX_SEC = HOT_WINDOW_SEC + 10 * 60
+HOT_LAST_5M_KEY: Optional[str] = None
+
+# Hot Now filters (15m momentum quality)
+HOT_MIN_RET_PCT = float(os.getenv("HOT_MIN_RET_PCT", "0.25"))       # min |15m return| to include
+HOT_MIN_RANGE_PCT = float(os.getenv("HOT_MIN_RANGE_PCT", "0.40"))   # min 15m high-low range % to include
+HOT_CLOSE_POS_TH = float(os.getenv("HOT_CLOSE_POS_TH", "0.60"))     # gainers close_pos>=th, losers close_pos<=1-th
 
 HVHR_N = int(os.getenv("HVHR_N", "20"))
 HVHR_RFACTOR_Q = float(os.getenv("HVHR_RFACTOR_Q", "0.85"))
@@ -91,22 +99,17 @@ kite.set_access_token(ACCESS_TOKEN)
 # SECTORS / SYMBOLS
 # =============================================================================
 SECTOR_DEFINITIONS = {
-
-    # -------- Existing Sectors (unchanged) --------
-
     "METAL": [
         "ADANIENT", "APLAPOLLO", "BHARATFORG", "COALINDIA",
         "HINDALCO", "HINDZINC", "JSWSTEEL",
         "JINDALSTEL", "NMDC", "NATIONALUM",
         "SAIL", "TATASTEEL", "VEDL"
     ],
-
     "REALTY": [
         "PHOENIXLTD", "GODREJPROP", "LODHA",
         "OBEROIRLTY", "DLF", "PRESTIGE",
         "NBCC", "RVNL", "HUDCO"
     ],
-
     "ENERGY": [
         "RELIANCE", "ONGC", "IOC", "BPCL", "OIL",
         "NTPC", "POWERGRID", "POWERINDIA",
@@ -116,7 +119,6 @@ SECTOR_DEFINITIONS = {
         "WAAREEENER", "PREMIERENE",
         "PETRONET", "GAIL", "HINDPETRO"
     ],
-
     "AUTO": [
         "BOSCHLTD", "TIINDIA", "HEROMOTOCO",
         "M&M", "EICHERMOT", "EXIDEIND",
@@ -126,7 +128,6 @@ SECTOR_DEFINITIONS = {
         "UNOMINDA", "TATAMOTORS",
         "AMBER"
     ],
-
     "IT": [
         "INFY", "TCS", "HCLTECH", "WIPRO",
         "TECHM", "LTIM", "MPHASIS",
@@ -134,7 +135,6 @@ SECTOR_DEFINITIONS = {
         "TATAELXSI", "OFSS", "CAMS",
         "TATATECH", "NAUKRI", "KAYNES"
     ],
-
     "PHARMA": [
         "CIPLA", "ALKEM", "BIOCON", "DRREDDY",
         "MANKIND", "TORNTPHARM", "ZYDUSLIFE",
@@ -144,7 +144,6 @@ SECTOR_DEFINITIONS = {
         "SUNPHARMA", "SYNGENE",
         "MAXHEALTH", "APOLLOHOSP"
     ],
-
     "FMCG": [
         "HINDUNILVR", "ITC", "NESTLEIND",
         "BRITANNIA", "DABUR", "MARICO",
@@ -157,14 +156,12 @@ SECTOR_DEFINITIONS = {
         "KALYANKJIL", "JUBLFOOD",
         "ASIANPAINT"
     ],
-
     "CEMENT": [
         "ULTRACEMCO", "SHREECEM",
         "AMBUJACEM", "DALBHARAT",
         "GRASIM", "ASTRAL",
         "PIDILITIND", "SUPREMEIND"
     ],
-
     "FINSERVICE": [
         "BAJFINANCE", "BAJAJFINSV", "BAJAJHLDNG",
         "ICICIPRULI", "ICICIGI", "SBILIFE",
@@ -180,7 +177,6 @@ SECTOR_DEFINITIONS = {
         "SAMMAANCAP", "ANGELONE",
         "BSE", "CDSL", "MCX", "IRFC"
     ],
-
     "BANK": [
         "HDFCBANK", "ICICIBANK", "AXISBANK",
         "KOTAKBANK", "IDFCFIRSTB",
@@ -189,30 +185,24 @@ SECTOR_DEFINITIONS = {
         "RBLBANK", "BANKINDIA", "PNB", "INDIANB",
         "SBIN", "UNIONBANK", "BANKBARODA", "CANBK"
     ],
-
     "TELECOM": [
         "BHARTIARTL", "INDUSTOWER",
         "HAVELLS", "KEI", "POLYCAB",
         "CROMPTON", "VOLTAS",
         "PGEL", "DIXON"
     ],
-
     "LOGISTICS": [
         "CONCOR", "DELHIVERY", "INDIGO",
         "INDHOTEL", "IRCTC",
         "BLUESTARCO", "GMRAIRPORT",
         "PAGEIND", "UPL"
     ],
-
     "DEFENCE": [
         "ABB", "BDL", "BEL", "BHEL",
         "CGPOWER", "CUMMINSIND",
         "HAL", "LT", "MAZDOCK",
         "SIEMENS", "SOLARINDS"
     ],
-
-    # -------- NEW SECTOR ADDED --------
-
     "NIFTY_50": [
         "ADANIENT", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BAJAJ-AUTO", "BAJFINANCE",
         "BAJAJFINSV", "BEL", "BHARTIARTL", "BPCL", "CIPLA", "COALINDIA",
@@ -223,7 +213,7 @@ SECTOR_DEFINITIONS = {
         "SBILIFE", "SHRIRAMFIN", "SBIN", "SUNPHARMA", "TCS", "TATACONSUM",
         "TATASTEEL", "TECHM", "TITAN", "TRENT", "ULTRACEMCO", "WIPRO",
         "TATAMOTORS", "ETERNAL"
-    ]
+    ],
 }
 
 ALL_SYMBOLS = sorted(set(sum(SECTOR_DEFINITIONS.values(), [])))
@@ -641,102 +631,80 @@ def compute_rfactor_row_for_token(token: int):
     }
 
 
-def compute_rfactor_row_for_token_paced(token: int):
-    state_ = get_live_or_eod_state(token)
-    if not state_:
-        return None
-
-    ltp, vol_today, ohlc = state_
-    prev_close = ohlc.get("close")
-    day_open = ohlc.get("open")
-    day_high = ohlc.get("high")
-    day_low = ohlc.get("low")
-
-    if prev_close is None or day_open is None:
-        return None
-
-    prev_close = float(prev_close)
-    day_open = float(day_open)
-    if prev_close <= 0 or day_open <= 0 or ltp <= 0:
-        return None
-
-    gap_pct = ((day_open - prev_close) / prev_close) * 100.0
-    pct_open = ((ltp - day_open) / day_open) * 100.0
-    range_today = (float(day_high) - float(day_low)) if (day_high is not None and day_low is not None) else 0.0
-
-    st = DAILY_STATS.get(token) or {}
-    avg_vol_20 = st.get("avg_vol_20")
-    avg_range_20 = st.get("avg_range_20")
-    avg_abs_oc_ret_20 = st.get("avg_abs_oc_ret_20")
-    if not avg_vol_20 or not avg_range_20 or not avg_abs_oc_ret_20:
-        return None
-
-    eps = 1e-9
-    tf = _time_factor_ist_for_rvol(datetime.now(IST))
-    expected = float(avg_vol_20) * float(tf)
-    rvolm = float(vol_today) / (expected + eps)
-
-    range_factor = max(0.0, float(range_today)) / (float(avg_range_20) + eps)
-    move_factor = abs(float(pct_open)) / (float(avg_abs_oc_ret_20) + eps)
-
-    rfactor_val = rvolm * range_factor * move_factor
-    dirr = (1.0 if pct_open >= 0 else -1.0) * rfactor_val
-
-    return {
-        "gap_pct": gap_pct,
-        "pct_open": pct_open,
-        "rvolm": float(rvolm),
-        "rfactor": float(rfactor_val),
-        "dirr": float(dirr),
-        "ltp": float(ltp),
-        "day_open": float(day_open),
-        "vol_today": float(vol_today),
-    }
-
-
+# =============================================================================
+# HOT NOW (15m) compute
+# =============================================================================
 def _compute_hot_row_for_token(token: int):
     dq = HOT_HISTORY.get(token)
     if not dq or len(dq) < 2:
         return None
 
-    now_epoch = dq[-1][0]
-    cutoff = now_epoch - HOT_WINDOW_SEC
+    now_epoch = float(dq[-1][0])
+    cutoff = now_epoch - float(HOT_WINDOW_SEC)  # now 5m window
 
+    # base tick at/before cutoff
     base = None
     for t, p, v in dq:
-        if t <= cutoff:
-            base = (t, p, v)
+        if float(t) <= cutoff:
+            base = (float(t), p, v)
         else:
             break
     if base is None:
-        base = dq[0]
+        base = (float(dq[0][0]), dq[0][1], dq[0][2])
 
-    _, base_p, base_v = base
+    base_t, base_p, base_v = base
     _, last_p, last_v = dq[-1]
 
-    if base_p is None or float(base_p) <= 0:
+    if base_p is None or float(base_p) <= 0 or last_p is None:
         return None
 
-    ret15 = (float(last_p) - float(base_p)) / float(base_p) * 100.0
+    # window points from base->now
+    win = [(float(t), p, v) for (t, p, v) in dq if float(t) >= base_t]
+    prices = [float(p) for _, p, _ in win if p is not None]
+    if len(prices) < 2:
+        return None
 
-    vol15 = None
+    lo = float(min(prices))
+    hi = float(max(prices))
+    rng = float(hi - lo)
+
+    base_pf = float(base_p)
+    last_pf = float(last_p)
+
+    # close-to-now return (not used for sorting; useful if you want later)
+    ret_close_pct = (last_pf - base_pf) / (base_pf + 1e-9) * 100.0
+
+    # range% within window
+    range_pct = (rng / (base_pf + 1e-9)) * 100.0
+
+    # where the last price sits in the window (0=low, 1=high)
+    close_pos = (last_pf - lo) / (rng + 1e-9)
+
+    # ---- SPIKE (what you asked) ----
+    # max excursion from base to high OR base to low (signed)
+    up_spike_pct = (hi - base_pf) / (base_pf + 1e-9) * 100.0           # >= 0
+    down_spike_pct = (lo - base_pf) / (base_pf + 1e-9) * 100.0         # <= 0
+
+    spike_pct = up_spike_pct if abs(up_spike_pct) >= abs(down_spike_pct) else down_spike_pct
+
+    # 5m volume (if available)
+    vol_win = None
     if base_v is not None and last_v is not None:
-        vol15 = float(last_v) - float(base_v)
-        if vol15 < 0:
-            vol15 = None
+        vol_win = float(last_v) - float(base_v)
+        if vol_win < 0:
+            vol_win = None
 
-    st = DAILY_STATS.get(token) or {}
-    avg_vol_20 = st.get("avg_vol_20") or None
-    rvol15 = None
-    if vol15 is not None and avg_vol_20 and float(avg_vol_20) > 0:
-        session_sec = 22500.0
-        expected_15 = float(avg_vol_20) * (HOT_WINDOW_SEC / session_sec)
-        rvol15 = float(vol15) / (expected_15 + 1e-9)
+    return {
+        "ret_close_pct": float(ret_close_pct),
+        "range_pct": float(range_pct),
+        "close_pos": float(close_pos),
+        "spike_pct": float(spike_pct),     # signed spike (from hi/lo excursion)
+        "vol_win": vol_win,
+    }
 
-    score = abs(ret15) * (rvol15 if rvol15 is not None else 1.0)
-    return {"ret15": ret15, "vol15": vol15, "score": score}
-
-
+# =============================================================================
+# TABLE ROW BUILDERS
+# =============================================================================
 def top_gainers_losers_rfactor_rows(n: int = 15):
     rows = []
     for sym in ALL_SYMBOLS:
@@ -806,6 +774,10 @@ def high_vol_high_rfactor_gainers_losers(n: int = HVHR_N, rfactor_quantile: floa
 
 def top_hot_now_rows(n: int = 15):
     rows = []
+
+    min_spike = float(HOT_MIN_RET_PCT)       # reuse your env var as min |SPIKE%|
+    min_rng = float(HOT_MIN_RANGE_PCT)       # min window range%
+
     for sym in ALL_SYMBOLS:
         tok = symbol_to_token.get(sym)
         if not tok:
@@ -815,35 +787,64 @@ def top_hot_now_rows(n: int = 15):
         if not hr:
             continue
 
-        rr = compute_rfactor_row_for_token(tok)
-        rfac = rr["rfactor"] if rr else None
+        spike = float(hr["spike_pct"])           # signed (up spike +, down spike -)
+        range_pct = float(hr["range_pct"])
 
-        rows.append({
-            "Symbol": sym,
-            "%Change": round(float(hr["ret15"]), 2),
-            "RFactor": (round(float(rfac), 2) if rfac is not None else None),
-            "Vol": (int(hr["vol15"]) if hr["vol15"] is not None else None),
-            "_score": float(hr["score"]),
-        })
+        # filters (tune HOT_MIN_RET_PCT / HOT_MIN_RANGE_PCT for 5m)
+        if abs(spike) < min_spike:
+            continue
+        if range_pct < min_rng:
+            continue
+
+        # Day range % (display only)
+        day_range_pct = None
+        st = get_live_or_eod_state(tok)
+        if st:
+            _, _, ohlc = st
+            try:
+                op = float(ohlc.get("open") or 0.0)
+                hi = float(ohlc.get("high") or 0.0)
+                lo = float(ohlc.get("low") or 0.0)
+                if op > 0 and hi > 0 and lo > 0 and hi >= lo:
+                    day_range_pct = (hi - lo) / op * 100.0
+            except Exception:
+                day_range_pct = None
+
+        rows.append(
+            {
+                "Symbol": sym,
+                "_spike": spike,
+                "_abs_spike": abs(spike),                  # sorting key
+                "SPIKE%": round(spike, 2),                 # signed spike
+                "RNG5%": round(range_pct, 2),              # window range
+                "DAY RNG%": (round(float(day_range_pct), 2) if day_range_pct is not None else None),
+            }
+        )
 
     if not rows:
         return [], []
 
-    df = pd.DataFrame(rows).dropna(subset=["%Change", "_score"])
-    gainers = (
-        df[df["%Change"] > 0]
-        .sort_values("_score", ascending=False)
-        .head(n)[["Symbol", "%Change", "RFactor", "Vol"]]
-        .to_dict("records")
-    )
-    losers = (
-        df[df["%Change"] < 0]
-        .sort_values("_score", ascending=False)
-        .head(n)[["Symbol", "%Change", "RFactor", "Vol"]]
-        .to_dict("records")
-    )
-    return gainers, losers
+    df = pd.DataFrame(rows).dropna(subset=["SPIKE%", "RNG5%"])
+    if df.empty:
+        return [], []
 
+    # Gainers = biggest UP spikes
+    gainers = (
+        df[df["_spike"] > 0]
+        .sort_values(["_abs_spike", "RNG5%"], ascending=[False, False])
+        .head(n)[["Symbol", "SPIKE%", "RNG5%", "DAY RNG%"]]
+        .to_dict("records")
+    )
+
+    # Losers = biggest DOWN spikes
+    losers = (
+        df[df["_spike"] < 0]
+        .sort_values(["_abs_spike", "RNG5%"], ascending=[False, False])
+        .head(n)[["Symbol", "SPIKE%", "RNG5%", "DAY RNG%"]]
+        .to_dict("records")
+    )
+
+    return gainers, losers
 
 def sector_rows_sorted(sector: str, sort_by: str = "RFactor"):
     rows = []
@@ -1079,7 +1080,7 @@ web.register_volm(
     },
 )
 
-# FNO Movers plugin (new; moved from optioninterest.py into Dash)
+# FNO Movers plugin
 web.register_fno_movers(
     dash_app,
     BASE=BASE,
@@ -1134,14 +1135,89 @@ def _sector_grid_opts(sort_by: str) -> dict:
 
 def sectors_page():
     four_cols = [
-        {"colId": "stock", "field": "Symbol", "headerName": "STOCK", "cellRenderer": "SymbolCell", "minWidth": 10, "flex": 1,
-         "headerClass": "h-left", "cellClass": "c-left"},
-        {"colId": "pctChg", "field": "%Change", "headerName": "%CHG", "cellRenderer": "PctPill", "minWidth": 150, "maxWidth": 150,
-         "suppressSizeToFit": True, "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
-        {"colId": "rfactor", "field": "RFactor", "headerName": "RFACTOR", "cellRenderer": "RfactorPill", "minWidth": 125, "maxWidth": 170,
-         "suppressSizeToFit": True, "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
-        {"colId": "volume", "field": "Vol", "headerName": "VOLUME", "cellRenderer": "VolPill", "minWidth": 140, "maxWidth": 190,
-         "suppressSizeToFit": True, "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
+        {
+            "colId": "stock",
+            "field": "Symbol",
+            "headerName": "STOCK",
+            "cellRenderer": "SymbolCell",
+            "minWidth": 10,
+            "flex": 1,
+            "headerClass": "h-left",
+            "cellClass": "c-left",
+        },
+        {
+            "colId": "pctChg",
+            "field": "%Change",
+            "headerName": "%CHG",
+            "cellRenderer": "PctPill",
+            "minWidth": 150,
+            "maxWidth": 150,
+            "suppressSizeToFit": True,
+            "headerClass": "ag-right-aligned-header h-right",
+            "cellClass": "ag-right-aligned-cell cell-num c-right",
+        },
+        {
+            "colId": "rfactor",
+            "field": "RFactor",
+            "headerName": "RFACTOR",
+            "cellRenderer": "RfactorPill",
+            "minWidth": 125,
+            "maxWidth": 170,
+            "suppressSizeToFit": True,
+            "headerClass": "ag-right-aligned-header h-right",
+            "cellClass": "ag-right-aligned-cell cell-num c-right",
+        },
+        {
+            "colId": "volume",
+            "field": "Vol",
+            "headerName": "VOLUME",
+            "cellRenderer": "VolPill",
+            "minWidth": 140,
+            "maxWidth": 190,
+            "suppressSizeToFit": True,
+            "headerClass": "ag-right-aligned-header h-right",
+            "cellClass": "ag-right-aligned-cell cell-num c-right",
+        },
+    ]
+
+    # Hot Now (5m) columns: STOCK | SPIKE% | RNG5% | DAY RNG%
+    hot_cols = [
+        four_cols[0],
+        {
+            "colId": "spike",
+            "field": "SPIKE%",
+            "headerName": "SPIKE%",
+            "cellRenderer": "PctPill",
+            "minWidth": 140,
+            "maxWidth": 160,
+            "suppressSizeToFit": True,
+            "headerClass": "ag-right-aligned-header h-right",
+            "cellClass": "ag-right-aligned-cell cell-num c-right",
+        },
+        {
+            "colId": "rng5",
+            "field": "RNG5%",
+            "headerName": "RNG5%",
+            "type": "rightAligned",
+            "valueFormatter": {"function": "fmtPct(params.value)"},
+            "minWidth": 120,
+            "maxWidth": 140,
+            "suppressSizeToFit": True,
+            "headerClass": "ag-right-aligned-header h-right",
+            "cellClass": "ag-right-aligned-cell cell-num c-right",
+        },
+        {
+            "colId": "dayrng",
+            "field": "DAY RNG%",
+            "headerName": "DAY RNG%",
+            "type": "rightAligned",
+            "valueFormatter": {"function": "fmtPct(params.value)"},
+            "minWidth": 130,
+            "maxWidth": 160,
+            "suppressSizeToFit": True,
+            "headerClass": "ag-right-aligned-header h-right",
+            "cellClass": "ag-right-aligned-cell cell-num c-right",
+        },
     ]
 
     grid_opts = {
@@ -1277,11 +1353,11 @@ def sectors_page():
                 [
                     dbc.Col(
                         [
-                            html.H6("Hot Now (last 15m) — Gainers", className="mt-1"),
+                            html.H6("Hot Now (last 5m) — Gainers", className="mt-1"),
                             dag.AgGrid(
                                 id="hot15-gainers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=four_cols,
+                                columnDefs=hot_cols,
                                 rowData=[],
                                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
                                 dashGridOptions=grid_opts,
@@ -1292,11 +1368,11 @@ def sectors_page():
                     ),
                     dbc.Col(
                         [
-                            html.H6("Hot Now (last 15m) — Losers", className="mt-1"),
+                            html.H6("Hot Now (last 5m) — Losers", className="mt-1"),
                             dag.AgGrid(
                                 id="hot15-losers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=four_cols,
+                                columnDefs=hot_cols,
                                 rowData=[],
                                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
                                 dashGridOptions=grid_opts,
@@ -1349,7 +1425,7 @@ def sector_page(sector: str):
                                 {"label": "Sort: RFactor", "value": "RFactor"},
                                 {"label": "Sort: RVOLm", "value": "RVOLm"},
                             ],
-                            value="RVOLm",
+                            value="RFactor",
                             inline=True,
                             className="ms-2",
                         ),
@@ -1363,20 +1439,56 @@ def sector_page(sector: str):
                 id="grid",
                 className="ag-theme-alpine-dark grid-wrap",
                 columnDefs=[
-                    {"colId": "stock", "field": "Symbol", "headerName": "STOCK", "pinned": "left", "cellRenderer": "StockCell", "minWidth": 260},
-                    {"colId": "price", "field": "Price", "headerName": "PRICE", "type": "rightAligned", "valueFormatter": {"function": "fmt2(params.value)"}, "minWidth": 120, "flex": 1},
-                    {"colId": "chgO", "field": "Chg (O)", "headerName": "CHG (O)", "type": "rightAligned", "valueFormatter": {"function": "fmtSigned2(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"}, "minWidth": 130, "flex": 1},
-                    {"colId": "gapPct", "field": "Gap%", "headerName": "GAP%", "type": "rightAligned", "valueFormatter": {"function": "fmtPct(params.value)"},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"}, "minWidth": 115, "flex": 1},
-                    {"colId": "rvol", "field": "RVOL", "headerName": "RVOLm", "type": "rightAligned", "cellRenderer": "RfactorPill", "valueFormatter": {"function": "fmt2(params.value)"}, "minWidth": 130, "flex": 1},
-                    {"colId": "rfactor", "field": "RFactor", "headerName": "RFACTOR", "type": "rightAligned", "valueFormatter": {"function": xfmt}, "minWidth": 130, "flex": 1},
-                    {"colId": "dirr", "field": "DirR", "headerName": "DIR R", "type": "rightAligned", "valueFormatter": {"function": xfmt},
-                     "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0", "cell-zero": "params.value === 0"}, "minWidth": 120, "flex": 1},
+                    {"colId": "stock", "field": "Symbol", "headerName": "STOCK", "pinned": "left",
+                     "cellRenderer": "StockCell", "minWidth": 260},
+                    
+                    {"colId": "price", "field": "Price", "headerName": "PRICE", "type": "rightAligned",
+                     "valueFormatter": {"function": "fmt2(params.value)"},
+                     "cellStyle": {"fontWeight": "700"},  # bold
+                     "minWidth": 120, "flex": 1},
+
+                    {"colId": "dirr", "field": "DirR", "headerName": "MOMENTUM", "type": "rightAligned",
+                     "valueFormatter": {"function": xfmt},
+                     "cellClassRules": {
+                         "cell-pos": "params.value > 0",
+                         "cell-neg": "params.value < 0",
+                         "cell-zero": "params.value === 0"
+                     },
+                     "minWidth": 140, "flex": 1},
+
+                    
+
+                    {"colId": "chgO", "field": "Chg (O)", "headerName": "CHG", "type": "rightAligned",
+                     "valueFormatter": {"function": "fmtSigned2(params.value)"},
+                     "cellClassRules": {
+                         "cell-pos": "params.value > 0",
+                         "cell-neg": "params.value < 0",
+                         "cell-zero": "params.value === 0"
+                     },
+                     "minWidth": 120, "flex": 1},
+
+                    {"colId": "gapPct", "field": "Gap%", "headerName": "GAP", "type": "rightAligned",
+                     "valueFormatter": {"function": "fmtPct(params.value)"},
+                     "cellClassRules": {
+                         "cell-pos": "params.value > 0",
+                         "cell-neg": "params.value < 0",
+                         "cell-zero": "params.value === 0"
+                     },
+                     "minWidth": 110, "flex": 1},
+
+                    {"colId": "rvol", "field": "RVOL", "headerName": "RVOLM", "type": "rightAligned",
+                     "cellRenderer": "RfactorPill",
+                     "valueFormatter": {"function": "fmt2(params.value)"},
+                     "minWidth": 120, "flex": 1},
+
+                    {"colId": "rfactor", "field": "RFactor", "headerName": "RFACTOR", "type": "rightAligned",
+                     "valueFormatter": {"function": xfmt},
+                     "cellStyle": {"fontWeight": "700"},  # bold
+                     "minWidth": 130, "flex": 1},
                 ],
                 rowData=[],
                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                dashGridOptions=_sector_grid_opts("RVOLm"),
+                dashGridOptions=_sector_grid_opts("RFactor"),
                 style={"height": "auto", "width": "100%"},
             ),
         ],
@@ -1414,19 +1526,15 @@ dash_app.layout = dbc.Container(
 def route(pathname):
     pn = (pathname or "").strip() or "/"
 
-    # Home / sectors overview
     if pn in ("/", "/dash", "/dash/", BASE):
         return sectors_page()
 
-    # Volm plugin page
     if pn in (f"{BASE}volm", f"{BASE}volm/"):
         return web.volm_page(BASE)
 
-    # F&O Movers (FUT) plugin page (new)
     if pn in (f"{BASE}fnomovers", f"{BASE}fnomovers/"):
         return web.fno_movers_page(BASE)
 
-    # OpenInterest standalone FastAPI app inside Dash via iframe
     if pn in (f"{BASE}openinterest", f"{BASE}openinterest/"):
         return html.Iframe(
             src="/openinterest",
@@ -1438,17 +1546,15 @@ def route(pathname):
             },
         )
 
-    # Sector detail page
     if pn.startswith(f"{BASE}sector/"):
         sector = unquote(pn.split(f"{BASE}sector/")[1]).upper()
         return sector_page(sector) if sector in SECTOR_DEFINITIONS else dbc.Alert("Sector not found", color="danger")
 
-    # Fallback
     return sectors_page()
 
 
+
 def _oi_inference_chip():
-    # read OpenInterest app state safely
     try:
         with openinterest.state_lock:
             s = dict(openinterest.state)
@@ -1462,25 +1568,17 @@ def _oi_inference_chip():
     bias = (s.get("bias") or "NEUTRAL").upper()
     label = s.get("label") or ""
 
-    # WAITING BASELINE -> default like other header chips (no special color)
     if not baseline_ok:
         return html.Div("OI: WAITING BASELINE", className="stat-chip", title=label)
 
     text = f"OI: {bt} • {bias}"
 
-    # Color by bias (BULLISH green, BEARISH red)
     if bias == "BULLISH":
-        style = {
-            "color": "var(--good)",
-            "borderColor": "rgba(46, 213, 115, 0.55)",
-        }
+        style = {"color": "var(--good)", "borderColor": "rgba(46, 213, 115, 0.55)"}
     elif bias == "BEARISH":
-        style = {
-            "color": "var(--bad)",
-            "borderColor": "rgba(255, 71, 87, 0.55)",
-        }
+        style = {"color": "var(--bad)", "borderColor": "rgba(255, 71, 87, 0.55)"}
     else:
-        style = {}  # neutral -> default chip styling
+        style = {}
 
     return html.Div(text, className="stat-chip", style=style, title=label)
 
@@ -1495,9 +1593,31 @@ def update_top_stats(_):
         tot = TOTAL_TICKS
 
         d_done = DAILY_SEED_DONE
-        d_done_n = DAILY_SEED_PROGRESS.get("done", 0)
-        d_total = DAILY_SEED_PROGRESS.get("total", 0)
-        d_err = DAILY_SEED_ERRORS
+        d_done_n = int(DAILY_SEED_PROGRESS.get("done", 0) or 0)
+        d_total = int(DAILY_SEED_PROGRESS.get("total", 0) or 0)
+        d_err = int(DAILY_SEED_ERRORS or 0)
+
+    # FNO seed progress (near expiry)
+    f_running = False
+    f_done_n = 0
+    f_total = 0
+    f_err = 0
+    f_last_err = None
+    try:
+        with fnoseed.state_lock:
+            futdf = fnoseed.FNO_FUT_DF
+            fut_loaded = bool(futdf is not None and not futdf.empty)
+            near = fnoseed.near_expiry_from_df(futdf, IST) if fut_loaded else None
+            near_s = str(near) if near else None
+
+            prog = dict(fnoseed.PREV_OI_PROGRESS.get(near_s) or {}) if near_s else {}
+            f_running = bool(prog.get("running"))
+            f_done_n = int(prog.get("done") or 0)
+            f_total = int(prog.get("total") or 0)
+            f_err = int(prog.get("errors") or 0)
+            f_last_err = fnoseed.LAST_ERROR
+    except Exception as e:
+        f_last_err = repr(e)
 
     chips = [
         dbc.Badge("Offline" if offline else "Live", color=("danger" if offline else "success"), className="stat-badge"),
@@ -1514,6 +1634,7 @@ def update_top_stats(_):
         _oi_inference_chip(),
     ]
 
+    # Show DAILY seed badge while running (same as your current behavior)
     if not d_done:
         chips.append(
             dbc.Badge(
@@ -1523,6 +1644,27 @@ def update_top_stats(_):
                 style={"marginLeft": "8px"},
             )
         )
+    else:
+        # After DAILY seed completes, show FNO OI seeding badge ONLY while it's running
+        if f_running:
+            chips.append(
+                dbc.Badge(
+                    f"FNO OI Seeding {f_done_n}/{f_total} (err {f_err})",
+                    color="warning",
+                    className="stat-badge",
+                    style={"marginLeft": "8px"},
+                )
+            )
+        # Optional: if FNO seed fails before it starts and never runs, show error badge
+        elif f_last_err and (f_total == 0 and f_done_n == 0):
+            chips.append(
+                dbc.Badge(
+                    "FNO OI Seed ERR",
+                    color="danger",
+                    className="stat-badge",
+                    style={"marginLeft": "8px"},
+                )
+            )
 
     chips += [
         html.Div(f"TPS {tps:.1f}", className="stat-chip"),
@@ -1667,10 +1809,8 @@ def update_dials(_):
         pcr_angle = (pcr_clamped - 1.0) * 90.0
         pcr_style = {"--rot": f"{pcr_angle:.2f}deg"}
 
-        pe_oi = pn.get("pe_oi")
-        ce_oi = pn.get("ce_oi")
-        pe_txt = _fmt_oi_compact(pe_oi)
-        ce_txt = _fmt_oi_compact(ce_oi)
+        pe_txt = _fmt_oi_compact(pn.get("pe_oi"))
+        ce_txt = _fmt_oi_compact(pn.get("ce_oi"))
 
         pcr_sub = html.Span(
             [
@@ -1721,9 +1861,31 @@ def update_hvhr(_):
     Input("refresh_sectors", "n_intervals"),
 )
 def update_hot_now(_):
+    global HOT_LAST_5M_KEY
+
+    now = datetime.now(IST)
+
+    # 5-min boundary key (changes only at :00, :05, :10, ...)
+    bucket_min = (now.minute // 5) * 5
+    key = f"{now.date().isoformat()} {now.hour:02d}:{bucket_min:02d}"
+
+    # First time: compute immediately
+    if HOT_LAST_5M_KEY is None:
+        HOT_LAST_5M_KEY = key
+        with LOCK:
+            return top_hot_now_rows(n=15)
+
+    # Update only right at the boundary (first ~2 seconds of the boundary minute)
+    if (now.minute % 5) != 0 or now.second > 2:
+        return dash.no_update, dash.no_update
+
+    # Already updated for this boundary minute
+    if key == HOT_LAST_5M_KEY:
+        return dash.no_update, dash.no_update
+
+    HOT_LAST_5M_KEY = key
     with LOCK:
         return top_hot_now_rows(n=15)
-
 
 @dash_app.callback(
     Output("grid", "rowData"),
@@ -1756,16 +1918,21 @@ HERE = Path(__file__).resolve().parent
 THEME_PATH = HERE / "assets" / "theme.css"
 
 
-import threading
-import fnoseed
-
 @app.on_event("startup")
 async def _startup():
     seed_daily_stats_once(per_req_sleep=SEED_SLEEP_SEC)
     start_ticker_once()
     load_nfo_instruments_once()
 
-    def _start_fno_seed_later():
+    def _start_fno_seed_when_ready():
+        # wait until daily seed is done to reduce rate-limit failures
+        while True:
+            with LOCK:
+                done = DAILY_SEED_DONE
+            if done:
+                break
+            time.sleep(2)
+
         fnoseed.start_seed_near_expiry_once(
             kite=kite,
             ist=IST,
@@ -1773,7 +1940,7 @@ async def _startup():
             pace_sec=float(os.getenv("FNO_PREV_OI_PACE_SEC", "0.35")),
         )
 
-    threading.Timer(25.0, _start_fno_seed_later).start()
+    threading.Thread(target=_start_fno_seed_when_ready, daemon=True).start()
 
     await openinterest.on_startup()
 
@@ -1805,7 +1972,6 @@ def health():
             "nfo_error": NFO_LOAD_ERR,
         }
 
-    # ✅ FNO prev-OI seed status from fnoseed
     try:
         with fnoseed.state_lock:
             futdf = fnoseed.FNO_FUT_DF
