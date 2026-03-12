@@ -1,3 +1,4 @@
+
 # web.py
 #
 # Dash page plugins for your main Dash app (app.py)
@@ -14,6 +15,10 @@
 #
 #   register_fno_movers ctx must include:
 #     ALL_SYMBOLS, IST
+#
+# Notes:
+# - FNO prev-day OI seeding is done ONLY in app.py via fnoseed.
+# - This module only READS fnoseed state.
 
 import os
 import time
@@ -22,7 +27,6 @@ from datetime import datetime, date, timedelta
 from typing import Dict, Any, Tuple, Optional, List
 
 import pandas as pd
-import dash
 from dash import dcc, html, Input, Output
 import dash_bootstrap_components as dbc
 import dash_ag_grid as dag
@@ -30,11 +34,11 @@ from dash.exceptions import PreventUpdate
 
 from kiteconnect import KiteConnect
 
-import fnoseed  # ✅ single source of truth for prev-day OI seeding (started by app.py)
+import fnoseed
 
 
 # =============================================================================
-# VOLM (Cash) — ORIGINAL LOGIC (unchanged)
+# VOLM (Cash)
 # =============================================================================
 
 MIN_AVG_VOL_20 = 50_000
@@ -80,7 +84,6 @@ def _safe_float(x, default=None):
 def _compute_volm_df(ctx: Dict[str, Any]) -> pd.DataFrame:
     """
     Cash-volm dataframe (paced RVOL vs 20D avg volume):
-
       RVOL = vol_today / (avg_vol_20 * time_factor)
     """
     LOCK = ctx["LOCK"]
@@ -112,9 +115,9 @@ def _compute_volm_df(ctx: Dict[str, Any]) -> pd.DataFrame:
             ltp = _safe_float(ltp)
             vol_today = _safe_float(vol_today)
 
-            op = _safe_float(ohlc.get("open"))
-            hi = _safe_float(ohlc.get("high"))
-            lo = _safe_float(ohlc.get("low"))
+            op = _safe_float((ohlc or {}).get("open"))
+            hi = _safe_float((ohlc or {}).get("high"))
+            lo = _safe_float((ohlc or {}).get("low"))
 
             if ltp is None or vol_today is None or op is None or op <= 0:
                 continue
@@ -243,18 +246,14 @@ kite_fno.set_access_token(_KITE_ACCESS_TOKEN)
 REST_LOCK = threading.Lock()
 FNO_LOCK = threading.RLock()
 
-# FUT universe cache for quotes/mapping (separate from fnoseed cache; safe)
+# Local FUT universe fallback cache (prefer fnoseed.FNO_FUT_DF if present)
 FNO_FUT_DF: Optional[pd.DataFrame] = None
 
-# FNO movers payload cache (REST TTL)
+# Movers payload cache
 MOVERS_CACHE: Dict[str, Tuple[dict, float]] = {}
 
-# FUT avg 20D volume cache (token -> (avg20, expires_epoch))
+# FUT avg 20D volume cache (used by Volm FUT Momentum table)
 FUT_AVGVOL20_CACHE: Dict[int, Tuple[Optional[float], float]] = {}
-
-# Near-month quote cache (expiry string -> (quotes dict, expiry epoch))
-FUT_NEAR_QUOTE_CACHE: Dict[str, Tuple[dict, float]] = {}
-FUT_NEAR_QUOTE_TTL_SEC = float(os.getenv("FUT_NEAR_QUOTE_TTL_SEC", "6"))
 
 
 def _chunk_list(xs: List[str], n: int):
@@ -324,13 +323,11 @@ def _load_fno_futures_once(ctx: Dict[str, Any]) -> pd.DataFrame:
     """
     global FNO_FUT_DF
 
-    # Prefer fnoseed's cached df (loaded in app.py)
     with fnoseed.state_lock:
         df_seed = fnoseed.FNO_FUT_DF
         if df_seed is not None and not df_seed.empty:
             return df_seed
 
-    # Fallback to local cache
     with FNO_LOCK:
         if FNO_FUT_DF is not None and not FNO_FUT_DF.empty:
             return FNO_FUT_DF
@@ -360,8 +357,17 @@ def _near_expiry_from_df(df: pd.DataFrame, ist) -> Optional[date]:
     return exps[0] if exps else None
 
 
+def _is_page(pathname: Optional[str], slug: str) -> bool:
+    """
+    Robust pathname check because Dash can sometimes report /fnomovers instead of /dash/fnomovers
+    depending on routing configuration.
+    """
+    pn = (pathname or "").strip().rstrip("/")
+    return pn.endswith("/" + slug) or pn == ("/" + slug)
+
+
 # =============================================================================
-# VOLM PAGE — FUT-based Momentum + OI% (reads prev-oi from fnoseed)
+# VOLM PAGE — FUT Momentum + OI% (reads prev-oi from fnoseed)
 # =============================================================================
 
 def _compute_rvol20_unpaced_df(ctx: Dict[str, Any]) -> pd.DataFrame:
@@ -389,15 +395,8 @@ def _compute_rvol20_unpaced_df(ctx: Dict[str, Any]) -> pd.DataFrame:
     with fnoseed.state_lock:
         prev_oi_map = dict(fnoseed.PREV_OI_BY_EXPIRY.get(expiry_s) or {})
 
-    # cached near-month quotes
-    now = time.time()
-    cached = FUT_NEAR_QUOTE_CACHE.get(expiry_s)
-    if cached and cached[1] > now:
-        q = cached[0]
-    else:
-        keys = ["NFO:" + s for s in dfe["tradingsymbol"].astype(str).tolist()]
-        q = _quote_many(keys, chunk_size=FNO_QUOTE_CHUNK)
-        FUT_NEAR_QUOTE_CACHE[expiry_s] = (q, now + FUT_NEAR_QUOTE_TTL_SEC)
+    keys = ["NFO:" + s for s in dfe["tradingsymbol"].astype(str).tolist()]
+    q = _quote_many(keys, chunk_size=FNO_QUOTE_CHUNK)
 
     u2fut_token: Dict[str, int] = dict(zip(dfe["name"].astype(str), dfe["instrument_token"].astype(int)))
     u2fut_sym: Dict[str, str] = dict(zip(dfe["name"].astype(str), dfe["tradingsymbol"].astype(str)))
@@ -638,13 +637,10 @@ def register_volm(dash_app, BASE: str, ctx: Dict[str, Any]) -> None:
 
 
 # =============================================================================
-# FNO MOVERS PAGE (reads fnoseed progress)
+# FNO MOVERS PAGE (Top Gainers/Losers only — NO "All" table)
 # =============================================================================
 
 def fno_movers_page(BASE: str):
-    # -----------------------------
-    # Formatters
-    # -----------------------------
     pct_fmt = {
         "function": (
             "params.value==null ? '—' : "
@@ -653,9 +649,6 @@ def fno_movers_page(BASE: str):
     }
     int_fmt = {"function": "params.value==null?'—':Number(params.value).toLocaleString('en-IN')"}
 
-    # -----------------------------
-    # Styles (VALUES bold)
-    # -----------------------------
     signed_bold = {
         "function": (
             "params.value==null ? {} : "
@@ -664,82 +657,20 @@ def fno_movers_page(BASE: str):
             "{color:'rgba(255,255,255,0.90)', fontWeight:'600'}))"
         )
     }
-    white_bold = {
-        "function": "params.value==null ? {} : ({color:'rgba(255,255,255,0.92)', fontWeight:'800'})"
-    }
+    white_bold = {"function": "params.value==null ? {} : ({color:'rgba(255,255,255,0.92)', fontWeight:'800'})"}
 
-    # -----------------------------
-    # Sizing (15 visible rows; scroll shows remaining)
-    # -----------------------------
     ROW_H = 34
     HDR_H = 34
     TOP_VISIBLE_ROWS = 15
     TOP_GRID_HEIGHT = f"{HDR_H + (TOP_VISIBLE_ROWS * ROW_H) + 6}px"
 
-    # -----------------------------
-    # Columns
-    # -----------------------------
     top_coldefs = [
-        {
-            "field": "Symbol",
-            "headerName": "SYMBOL",
-            "pinned": "left",
-            "minWidth": 170,
-            "flex": 1,
-            "cellRenderer": "SymbolCell",
-        },
-        {
-            "field": "%Chg",
-            "headerName": "%CHANGE",
-            "type": "rightAligned",
-            "minWidth": 120,
-            "valueFormatter": pct_fmt,
-            "cellStyle": signed_bold,   # ✅ bold values + green/red
-        },
-        {
-            "field": "Contracts",
-            "headerName": "CONTRACTS",
-            "type": "rightAligned",
-            "minWidth": 140,
-            "valueFormatter": int_fmt,
-            "cellStyle": white_bold,    # ✅ bold values
-        },
-        {
-            "field": "OI%",
-            "headerName": "OI%",
-            "type": "rightAligned",
-            "minWidth": 100,
-            "valueFormatter": pct_fmt,
-            "cellStyle": signed_bold,   # ✅ bold values + green/red
-        },
+        {"field": "Symbol", "headerName": "SYMBOL", "pinned": "left", "minWidth": 170, "flex": 1, "cellRenderer": "SymbolCell"},
+        {"field": "%Chg", "headerName": "%CHANGE", "type": "rightAligned", "minWidth": 120, "valueFormatter": pct_fmt, "cellStyle": signed_bold},
+        {"field": "Contracts", "headerName": "CONTRACTS", "type": "rightAligned", "minWidth": 140, "valueFormatter": int_fmt, "cellStyle": white_bold},
+        {"field": "OI%", "headerName": "OI%", "type": "rightAligned", "minWidth": 100, "valueFormatter": pct_fmt, "cellStyle": signed_bold},
     ]
 
-    # All table: reuse top columns + add details
-    all_coldefs = top_coldefs + [
-        {
-            "field": "FUT_RVOLm20",
-            "headerName": "FUT RVOLm20",
-            "type": "rightAligned",
-            "minWidth": 130,
-            "maxWidth": 150,
-            "valueFormatter": {"function": "params.value==null ? '—' : (Number(params.value).toFixed(2) + 'x')"},
-            "cellStyle": white_bold,
-        },
-        {"field": "BuildUp", "headerName": "BUILD UP", "minWidth": 170, "flex": 1},
-        {"field": "Contract", "headerName": "CONTRACT", "minWidth": 190, "flex": 1},
-        {
-            "field": "Price",
-            "headerName": "PRICE",
-            "type": "rightAligned",
-            "minWidth": 110,
-            "valueFormatter": {"function": "params.value==null?'—':Number(params.value).toFixed(2)"},
-            "cellStyle": white_bold,
-        },
-    ]
-
-    # -----------------------------
-    # Grid options
-    # -----------------------------
     grid_opts = {
         "immutableData": True,
         "getRowId": {"function": "params.data.Contract || params.data.Symbol"},
@@ -762,9 +693,6 @@ def fno_movers_page(BASE: str):
             style={"height": height, "width": "100%"},
         )
 
-    # -----------------------------
-    # Layout
-    # -----------------------------
     return html.Div(
         [
             dcc.Interval(id="refresh_fno_movers", interval=4000, n_intervals=0),
@@ -772,17 +700,8 @@ def fno_movers_page(BASE: str):
 
             dbc.Row(
                 [
-                    dbc.Col(
-                        html.Div(
-                            [html.Div("F&O MOVERS", className="fno-title-kicker")],
-                            className="fno-title-wrap",
-                        ),
-                        width=True,
-                    ),
-                    dbc.Col(
-                        dbc.Button("Back", href=f"{BASE}", color="secondary", outline=True, className="btn-back"),
-                        width="auto",
-                    ),
+                    dbc.Col(html.Div([html.Div("F&O MOVERS", className="fno-title-kicker")], className="fno-title-wrap"), width=True),
+                    dbc.Col(dbc.Button("Back", href=f"{BASE}", color="secondary", outline=True, className="btn-back"), width="auto"),
                 ],
                 className="align-items-center g-2",
             ),
@@ -812,28 +731,13 @@ def fno_movers_page(BASE: str):
 
             dbc.Row(
                 [
-                    dbc.Col(
-                        [
-                            html.H6("Top Gainers (30 rows, scroll)", className="mt-1 fno-section-title"),
-                            grid("fno_gainers_grid", top_coldefs, TOP_GRID_HEIGHT),
-                        ],
-                        md=6,
-                    ),
-                    dbc.Col(
-                        [
-                            html.H6("Top Losers (30 rows, scroll)", className="mt-1 fno-section-title"),
-                            grid("fno_losers_grid", top_coldefs, TOP_GRID_HEIGHT),
-                        ],
-                        md=6,
-                    ),
+                    dbc.Col([html.H6("Top Gainers (30 rows, scroll)", className="mt-1 fno-section-title"),
+                             grid("fno_gainers_grid", top_coldefs, TOP_GRID_HEIGHT)], md=6),
+                    dbc.Col([html.H6("Top Losers (30 rows, scroll)", className="mt-1 fno-section-title"),
+                             grid("fno_losers_grid", top_coldefs, TOP_GRID_HEIGHT)], md=6),
                 ],
                 className="g-2",
             ),
-
-            html.Hr(),
-
-            html.H6("All (sorted by Contracts)", className="mt-1 fno-section-title"),
-            grid("fno_all_grid", all_coldefs, "min(560px, 52vh)"),
         ],
         className="page-wrap",
     )
@@ -848,8 +752,7 @@ def register_fno_movers(dash_app, BASE: str, ctx: Dict[str, Any]) -> None:
         prevent_initial_call=False,
     )
     def _load_expiries(_n, pathname):
-        pn = (pathname or "").strip()
-        if pn not in (f"{BASE}fnomovers", f"{BASE}fnomovers/"):
+        if not _is_page(pathname, "fnomovers"):
             raise PreventUpdate
 
         df = _load_fno_futures_once(ctx)
@@ -877,7 +780,6 @@ def register_fno_movers(dash_app, BASE: str, ctx: Dict[str, Any]) -> None:
     @dash_app.callback(
         Output("fno_gainers_grid", "rowData"),
         Output("fno_losers_grid", "rowData"),
-        Output("fno_all_grid", "rowData"),
         Output("fno_seed_status", "children"),
         Output("fno_updated_at", "children"),
         Input("refresh_fno_movers", "n_intervals"),
@@ -886,27 +788,29 @@ def register_fno_movers(dash_app, BASE: str, ctx: Dict[str, Any]) -> None:
         prevent_initial_call=False,
     )
     def _refresh(_n, expiry_s, pathname):
-        pn = (pathname or "").strip()
-        if pn not in (f"{BASE}fnomovers", f"{BASE}fnomovers/"):
+        if not _is_page(pathname, "fnomovers"):
             raise PreventUpdate
 
         if not expiry_s:
-            return [], [], [], "—", "—"
+            return [], [], "—", "—"
 
         try:
             exp = date.fromisoformat(expiry_s)
         except Exception:
-            return [], [], [], "Invalid expiry", "—"
+            return [], [], "Invalid expiry", "—"
 
         payload = _compute_fno_movers_payload_internal(ctx, exp, top_n=30)
 
-        # ✅ seed status from fnoseed (single source)
+        # Seed status (single source: fnoseed)
         with fnoseed.state_lock:
             prog = dict(fnoseed.PREV_OI_PROGRESS.get(str(exp)) or {})
             last_err = fnoseed.LAST_ERROR
 
         if last_err and not prog:
-            seed_children = html.Span(f"ERR: {str(last_err)[:140]}", style={"color": "var(--bad)", "fontWeight": "800"})
+            seed_children = html.Span(
+                f"ERR: {str(last_err)[:140]}",
+                style={"color": "var(--bad)", "fontWeight": "800"},
+            )
         else:
             running = bool(prog.get("running"))
             done = int(prog.get("done") or 0)
@@ -928,22 +832,16 @@ def register_fno_movers(dash_app, BASE: str, ctx: Dict[str, Any]) -> None:
                     className="fno-meta-inline",
                 )
 
-        updated_iso = payload.get("updated_at")
-        updated_txt, updated_title = _fmt_updated_ist(updated_iso)
+        updated_txt, updated_title = _fmt_updated_ist(payload.get("updated_at"))
         updated_children = html.Span(updated_txt, title=updated_title)
 
-        return (
-            payload.get("gainers", []),
-            payload.get("losers", []),
-            payload.get("rows", []),
-            seed_children,
-            updated_children,
-        )
+        return payload.get("gainers", []), payload.get("losers", []), seed_children, updated_children
 
 
 def _compute_fno_movers_payload_internal(ctx: Dict[str, Any], expiry_: date, top_n: int = 30) -> dict:
     """
-    Builds movers payload. Uses fnoseed prev OI map (no seeding here).
+    Top gainers/losers payload only (NO All table).
+    Fast: uses quote() + (optional) fnoseed baseline map.
     """
     cache_key = f"{expiry_}:{int(top_n)}"
     now = time.time()
@@ -959,10 +857,8 @@ def _compute_fno_movers_payload_internal(ctx: Dict[str, Any], expiry_: date, top
         payload = {
             "expiry": str(expiry_),
             "updated_at": datetime.now(ctx["IST"]).isoformat(),
-            "rows": [],
             "gainers": [],
             "losers": [],
-            "prev_oi_progress": {},
             "note": "No FUT rows for this expiry.",
         }
         with FNO_LOCK:
@@ -972,12 +868,9 @@ def _compute_fno_movers_payload_internal(ctx: Dict[str, Any], expiry_: date, top
     expiry_s = str(expiry_)
     with fnoseed.state_lock:
         prev_oi_map = dict(fnoseed.PREV_OI_BY_EXPIRY.get(expiry_s) or {})
-        prog = dict(fnoseed.PREV_OI_PROGRESS.get(expiry_s) or {})
 
     keys = ["NFO:" + s for s in dfe["tradingsymbol"].astype(str).tolist()]
     q = _quote_many(keys, chunk_size=FNO_QUOTE_CHUNK)
-
-    tf = _time_factor_ist(datetime.now(ctx["IST"]))
 
     rows: List[dict] = []
     for _, r in dfe.iterrows():
@@ -1008,87 +901,61 @@ def _compute_fno_movers_payload_internal(ctx: Dict[str, Any], expiry_: date, top
         oi_prev = prev_oi_map.get(fut_token)
 
         oi_pct = None
-        buildup = "NO CLEAR"
         if oi is not None and oi_prev is not None and int(oi_prev) != 0:
             try:
                 oi_now = int(oi)
                 oi_prev_i = int(oi_prev)
                 oi_chg = int(oi_now - oi_prev_i)
                 oi_pct = (float(oi_chg) / float(oi_prev_i)) * 100.0
-
-                if price_chg > 0 and oi_chg > 0:
-                    buildup = "LONG BUILDUP"
-                elif price_chg < 0 and oi_chg > 0:
-                    buildup = "SHORT BUILDUP"
-                elif price_chg > 0 and oi_chg < 0:
-                    buildup = "SHORT COVERING"
-                elif price_chg < 0 and oi_chg < 0:
-                    buildup = "LONG UNWINDING"
-                else:
-                    buildup = "NO CLEAR"
             except Exception:
                 oi_pct = None
-                buildup = "NO CLEAR"
-
-        fut_rvolm20 = None
-        try:
-            avg20 = fut_avg_vol_20d(fut_token, ctx["IST"])
-            if avg20 and avg20 > 0 and vol is not None:
-                expected = float(avg20) * float(tf)
-                fut_rvolm20 = float(vol) / (expected + 1e-9)
-        except Exception:
-            fut_rvolm20 = None
 
         underlying = str(r.get("name") or "")
         rows.append(
             {
                 "Symbol": underlying if underlying else tsym,
                 "Contract": tsym,
-                "Price": round(ltp_f, 2),
-                "%Chg": round(price_pct, 2),
+                "%Chg": round(float(price_pct), 2),
                 "Contracts": int(vol or 0),
                 "OI%": (round(float(oi_pct), 2) if oi_pct is not None else None),
-                "FUT_RVOLm20": (round(float(fut_rvolm20), 2) if fut_rvolm20 is not None else None),
-                "BuildUp": buildup,
             }
         )
 
-    dfr = pd.DataFrame(rows)
-    if dfr.empty:
+    if not rows:
         payload = {
             "expiry": str(expiry_),
             "updated_at": datetime.now(ctx["IST"]).isoformat(),
-            "rows": [],
             "gainers": [],
             "losers": [],
-            "prev_oi_progress": prog,
             "note": "No quote rows yet.",
         }
         with FNO_LOCK:
             MOVERS_CACHE[cache_key] = (payload, now + FNO_MOVERS_TTL_SEC)
         return payload
 
-    full_sorted = dfr.sort_values(["Contracts", "%Chg"], ascending=[False, False]).to_dict("records")
-    gainers = (
+    dfr = pd.DataFrame(rows)
+
+    gainers_df = (
         dfr[dfr["%Chg"] > 0]
         .sort_values(["Contracts", "%Chg"], ascending=[False, False])
         .head(int(top_n))
-        .to_dict("records")
+        .copy()
     )
-    losers = (
+    losers_df = (
         dfr[dfr["%Chg"] < 0]
         .sort_values(["Contracts", "%Chg"], ascending=[False, True])
         .head(int(top_n))
-        .to_dict("records")
+        .copy()
     )
+
+    gainers_df = gainers_df.where(pd.notnull(gainers_df), None)
+    losers_df = losers_df.where(pd.notnull(losers_df), None)
 
     payload = {
         "expiry": str(expiry_),
         "updated_at": datetime.now(ctx["IST"]).isoformat(),
-        "rows": full_sorted,
-        "gainers": gainers,
-        "losers": losers,
-        "prev_oi_progress": prog,
+        "gainers": gainers_df.to_dict("records"),
+        "losers": losers_df.to_dict("records"),
     }
 
     with FNO_LOCK:
