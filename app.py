@@ -1208,7 +1208,7 @@ def sector_modal_component():
                         rowData=[],
                         defaultColDef={"sortable": True, "filter": True, "resizable": True},
                         dashGridOptions=grid_opts,
-                        style={"height": "70vh", "width": "100%"},
+                        style={"height": "67vh", "width": "100%"},
                     ),
                     className="tt-modal-gridwrap",
                 ),
@@ -1696,8 +1696,14 @@ def update_top_stats(_):
         d_total = int(DAILY_SEED_PROGRESS.get("total", 0) or 0)
         d_err = int(DAILY_SEED_ERRORS or 0)
 
+    # ---- BIAS chip (include ADV/DEC counts) ----
     sent_label = str(sm.get("label") or "NEUTRAL").upper()
     sent_score = float(sm.get("score") or 0.0)
+
+    adv = int(sm.get("adv", 0) or 0)
+    dec = int(sm.get("dec", 0) or 0)
+    unch = int(sm.get("unch", 0) or 0)
+
     if sent_label == "BULLISH":
         sent_style = {"color": "var(--good)", "borderColor": "rgba(46, 213, 115, 0.55)"}
     elif sent_label == "BEARISH":
@@ -1706,16 +1712,18 @@ def update_top_stats(_):
         sent_style = {}
 
     sentiment_chip = html.Div(
-        f"BIAS: {sent_label} ({sent_score:+.2f})",
+        f"BIAS: {sent_label} ({sent_score:+.2f}) • {adv} ↑ • {dec} ↓",
         className="stat-chip",
         style=sent_style,
-        title=f"Adv {sm.get('adv',0)} • Dec {sm.get('dec',0)} • Unch {sm.get('unch',0)}",
+        title=f"Adv {adv} • Dec {dec} • Unch {unch}",
     )
 
+    # ---- PCR chip ----
     pn = compute_real_nifty_oi_pcr(strikes_around_atm=PCR_STRIKES_AROUND_ATM)
     if pn and pn.get("pcr") is not None:
         pcr = float(pn["pcr"])
         pcr_lbl = pcr_label_from_value(pcr)
+
         if pcr_lbl in ("BUY", "STRONG BUY"):
             pcr_style = {"color": "var(--good)", "borderColor": "rgba(46, 213, 115, 0.55)"}
         elif pcr_lbl in ("SELL", "STRONG SELL"):
@@ -1746,6 +1754,7 @@ def update_top_stats(_):
         pcr_chip,
     ]
 
+    # DAILY seed badge while running
     if not d_done:
         chips.append(
             dbc.Badge(
