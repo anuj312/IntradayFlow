@@ -1205,18 +1205,6 @@ def _sector_modal_coldefs():
             "headerClass": "ag-right-aligned-header h-right",
             "cellClass": "ag-right-aligned-cell cell-num c-right",
         },
-        {
-            "colId": "rfactor",
-            "field": "RFactor",
-            "headerName": "RFACTOR",
-            "type": "rightAligned",
-            "cellRenderer": "Num2Cell",
-            "minWidth": 120,
-            "maxWidth": 140,
-            "suppressSizeToFit": True,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
-        },
     ]
 
 
