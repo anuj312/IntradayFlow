@@ -1279,6 +1279,7 @@ def sector_modal_component():
 
         # ✅ dbc.Modal uses className (NOT modalClassName)
         className="tt-modal",
+        dialogClassName="tt-modal-dialog-wide", 
         contentClassName="tt-modal-content",
         backdropClassName="tt-modal-backdrop",
     )

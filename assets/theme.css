@@ -3332,3 +3332,17 @@ td:first-child { text-align: left; }
   margin-left:auto;
   flex:0 0 auto;
 }
+
+/* Make the popup wider (left-right) */
+.tt-modal-dialog-wide{
+  max-width: 96vw !important;  /* increase/decrease */
+  width: 96vw !important;
+}
+
+/* optional: on very large screens, cap it */
+@media (min-width: 1400px){
+  .tt-modal-dialog-wide{
+    max-width: 1400px !important;
+    width: 1400px !important;
+  }
+}
