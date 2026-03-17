@@ -171,13 +171,15 @@ SECTOR_DEFINITIONS = {
         "BSE", "CDSL", "MCX", "IRFC"
     ],
     "BANK": [
-        "HDFCBANK", "ICICIBANK", "AXISBANK",
-        "KOTAKBANK", "IDFCFIRSTB",
-        "FEDERALBNK", "INDUSINDBK",
-        "AUBANK", "BANDHANBNK",
-        "RBLBANK", "BANKINDIA", "PNB", "INDIANB",
-        "SBIN", "UNIONBANK", "BANKBARODA", "CANBK"
+        "HDFCBANK", "ICICIBANK", "AXISBANK", "KOTAKBANK",
+        "IDFCFIRSTB", "FEDERALBNK", "INDUSINDBK",
+        "AUBANK", "BANDHANBNK", "RBLBANK",
     ],
+     "PSUBANK": [
+        "SBIN", "PNB", "BANKBARODA", "CANBK",
+        "UNIONBANK", "BANKINDIA", "INDIANB",
+    ],
+    
     "TELECOM": [
         "BHARTIARTL", "INDUSTOWER",
         "HAVELLS", "KEI", "POLYCAB",
