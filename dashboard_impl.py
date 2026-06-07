@@ -1082,6 +1082,7 @@ dash_app = dash.Dash(
     routes_pathname_prefix="/",
     assets_folder=os.path.join(os.path.dirname(__file__), "assets"),
     suppress_callback_exceptions=True,
+    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
 )
 server = dash_app.server
 
@@ -1148,7 +1149,7 @@ def _sector_modal_coldefs():
         {
             "colId": "dirr",
             "field": "DirR",
-            "headerName": "DIR R",
+            "headerName": "MOMENTUM",
             "type": "rightAligned",
             "cellRenderer": "Num2Cell",
             "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
@@ -1263,6 +1264,7 @@ def sector_modal_component():
         id="sector-modal",
         is_open=False,
         size="xl",
+        fullscreen="md-down", 
         centered=True,
         scrollable=True,
         backdrop=True,
@@ -1277,32 +1279,49 @@ def sector_modal_component():
 # =============================================================================
 def sectors_page():
     four_cols = [
-        {"colId": "stock", "field": "Symbol", "headerName": "STOCK", "cellRenderer": "SymbolCell",
-         "minWidth": 10, "flex": 1, "headerClass": "h-left", "cellClass": "c-left"},
-        {"colId": "pctChg", "field": "%Change", "headerName": "%CHG", "cellRenderer": "PctPill",
-         "minWidth": 150, "maxWidth": 150, "suppressSizeToFit": True,
-         "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
-        {"colId": "rfactor", "field": "RFactor", "headerName": "RFACTOR", "cellRenderer": "RfactorPill",
-         "minWidth": 125, "maxWidth": 170, "suppressSizeToFit": True,
-         "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
-        {"colId": "volume", "field": "Vol", "headerName": "VOLUME", "cellRenderer": "VolPill",
-         "minWidth": 140, "maxWidth": 190, "suppressSizeToFit": True,
-         "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
-    ]
-
-    hot_cols = [
-        four_cols[0],
-        {"colId": "spike", "field": "SPIKE%", "headerName": "SPIKE%", "cellRenderer": "PctPill",
-         "minWidth": 140, "maxWidth": 160, "suppressSizeToFit": True,
-         "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
-        {"colId": "rng5", "field": "RNG5%", "headerName": "RNG5%", "type": "rightAligned",
-         "valueFormatter": {"function": "fmtPct(params.value)"},
-         "minWidth": 120, "maxWidth": 140, "suppressSizeToFit": True,
-         "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
-        {"colId": "dayrng", "field": "DAY RNG%", "headerName": "DAY RNG%", "type": "rightAligned",
-         "valueFormatter": {"function": "fmtPct(params.value)"},
-         "minWidth": 130, "maxWidth": 160, "suppressSizeToFit": True,
-         "headerClass": "ag-right-aligned-header h-right", "cellClass": "ag-right-aligned-cell cell-num c-right"},
+        {
+            "colId": "stock",
+            "field": "Symbol",
+            "headerName": "STOCK",
+            "cellRenderer": "SymbolCell",
+            "minWidth": 10,
+            "flex": 1,
+            "headerClass": "h-left",
+            "cellClass": "c-left",
+        },
+        {
+            "colId": "pctChg",
+            "field": "%Change",
+            "headerName": "%CHG",
+            "cellRenderer": "PctPill",
+            "minWidth": 150,
+            "maxWidth": 150,
+            "suppressSizeToFit": True,
+            "headerClass": "ag-right-aligned-header h-right",
+            "cellClass": "ag-right-aligned-cell cell-num c-right",
+        },
+        {
+            "colId": "rfactor",
+            "field": "RFactor",
+            "headerName": "MOMENTUM",  # was RFACTOR
+            "cellRenderer": "RfactorPill",
+            "minWidth": 125,
+            "maxWidth": 170,
+            "suppressSizeToFit": True,
+            "headerClass": "ag-right-aligned-header h-right",
+            "cellClass": "ag-right-aligned-cell cell-num c-right",
+        },
+        {
+            "colId": "volume",
+            "field": "Vol",
+            "headerName": "VOLUME",
+            "cellRenderer": "VolPill",
+            "minWidth": 140,
+            "maxWidth": 190,
+            "suppressSizeToFit": True,
+            "headerClass": "ag-right-aligned-header h-right",
+            "cellClass": "ag-right-aligned-cell cell-num c-right",
+        },
     ]
 
     grid_opts = {
@@ -1313,8 +1332,6 @@ def sectors_page():
         "onGridReady": {"function": "params.api.sizeColumnsToFit();"},
         "onGridSizeChanged": {"function": "params.api.sizeColumnsToFit();"},
     }
-
-    top_bucket_pct = int((1.0 - float(HVHR_RFACTOR_Q)) * 100)
 
     return html.Div(
         [
@@ -1329,7 +1346,7 @@ def sectors_page():
                             options=[
                                 {"label": "Sort: RVOLm", "value": "RVOLm"},
                                 {"label": "Sort: RVOLm Mean", "value": "RVOLmMean"},
-                                {"label": "Sort: DirR (mean)", "value": "DirR"},
+                                {"label": "Sort: Momentum (mean)", "value": "DirR"},
                             ],
                             value="RVOLm",
                             inline=True,
@@ -1344,7 +1361,7 @@ def sectors_page():
             html.Div(id="sector-bars", className="sector-bars-wrap"),
             html.Div(
                 "Click a sector bar to open popup. "
-                "RVOLm = net paced rel vol (buy−sell). DirR = signed mean directional rfactor.",
+                "RVOLm = net paced rel vol (buy−sell). Momentum = signed mean directional rfactor.",
                 className="hint",
             ),
 
@@ -1354,7 +1371,7 @@ def sectors_page():
                 [
                     dbc.Col(
                         [
-                            html.H6("Top 15 Gainers (sorted by RFactor)", className="mt-1"),
+                            html.H6("Top 15 Gainers", className="mt-1"),
                             dag.AgGrid(
                                 id="top15-gainers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
@@ -1369,93 +1386,11 @@ def sectors_page():
                     ),
                     dbc.Col(
                         [
-                            html.H6("Top 15 Losers (sorted by RFactor)", className="mt-1"),
+                            html.H6("Top 15 Losers", className="mt-1"),
                             dag.AgGrid(
                                 id="top15-losers-grid",
                                 className="ag-theme-alpine-dark grid-wrap compact-grid",
                                 columnDefs=four_cols,
-                                rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                                dashGridOptions=grid_opts,
-                                style={"height": "min(520px, 48vh)", "width": "100%"},
-                            ),
-                        ],
-                        md=6,
-                    ),
-                ],
-                className="g-2",
-            ),
-
-            html.Hr(),
-
-            dbc.Row(
-                [
-                    dbc.Col(
-                        [
-                            html.H6(
-                                f"High Vol + High RFactor — Gainers (Top {top_bucket_pct}% RFactor bucket, sorted by Vol)",
-                                className="mt-1",
-                            ),
-                            dag.AgGrid(
-                                id="hvhr-gainers-grid",
-                                className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=four_cols,
-                                rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                                dashGridOptions=grid_opts,
-                                style={"height": "min(520px, 44vh)", "width": "100%"},
-                            ),
-                        ],
-                        md=6,
-                    ),
-                    dbc.Col(
-                        [
-                            html.H6(
-                                f"High Vol + High RFactor — Losers (Top {top_bucket_pct}% RFactor bucket, sorted by Vol)",
-                                className="mt-1",
-                            ),
-                            dag.AgGrid(
-                                id="hvhr-losers-grid",
-                                className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=four_cols,
-                                rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                                dashGridOptions=grid_opts,
-                                style={"height": "min(520px, 44vh)", "width": "100%"},
-                            ),
-                        ],
-                        md=6,
-                    ),
-                ],
-                className="g-2",
-            ),
-
-            html.Hr(),
-
-            dbc.Row(
-                [
-                    dbc.Col(
-                        [
-                            html.H6("Hot Now (last 5m) — Gainers", className="mt-1"),
-                            dag.AgGrid(
-                                id="hot15-gainers-grid",
-                                className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=hot_cols,
-                                rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                                dashGridOptions=grid_opts,
-                                style={"height": "min(520px, 48vh)", "width": "100%"},
-                            ),
-                        ],
-                        md=6,
-                    ),
-                    dbc.Col(
-                        [
-                            html.H6("Hot Now (last 5m) — Losers", className="mt-1"),
-                            dag.AgGrid(
-                                id="hot15-losers-grid",
-                                className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=hot_cols,
                                 rowData=[],
                                 defaultColDef={"sortable": True, "filter": True, "resizable": True},
                                 dashGridOptions=grid_opts,
@@ -2143,25 +2078,6 @@ def update_rfactor_leaderboards(_):
     with CACHE_LOCK:
         return list(CACHE.get("top15_gainers") or []), list(CACHE.get("top15_losers") or [])
 
-
-@dash_app.callback(
-    Output("hvhr-gainers-grid", "rowData"),
-    Output("hvhr-losers-grid", "rowData"),
-    Input("refresh_sectors", "n_intervals"),
-)
-def update_hvhr(_):
-    with CACHE_LOCK:
-        return list(CACHE.get("hvhr_gainers") or []), list(CACHE.get("hvhr_losers") or [])
-
-
-@dash_app.callback(
-    Output("hot15-gainers-grid", "rowData"),
-    Output("hot15-losers-grid", "rowData"),
-    Input("refresh_sectors", "n_intervals"),
-)
-def update_hot_now(_):
-    with CACHE_LOCK:
-        return list(CACHE.get("hot_gainers") or []), list(CACHE.get("hot_losers") or [])
 
 
 @dash_app.callback(

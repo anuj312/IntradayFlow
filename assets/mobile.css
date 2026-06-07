@@ -1,0 +1,63 @@
+/* MOBILE RESPONSIVE OVERRIDES */
+@media (max-width: 768px) {
+  /* Prevent sideways scrolling of the whole page */
+  html, body {
+    overflow-x: hidden;
+  }
+
+  /* Top chips: wrap nicely on small screens */
+  .top-stats-wrap {
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+
+  .stat-chip, .stat-badge {
+    font-size: 12px;
+    padding: 6px 8px;
+    margin: 0;
+  }
+
+  .page-title {
+    font-size: 18px;
+  }
+
+  /* Make Sector bars scroll horizontally (so bars don't become microscopic) */
+  .sector-hist-plot {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 6px;
+  }
+  .sector-hist-col {
+    min-width: 58px; /* each sector stays tappable */
+  }
+
+  /* Force the sector plot height smaller on mobile (overrides inline heights) */
+  .sector-hist-track,
+  .sector-hist-axis {
+    height: 240px !important;
+  }
+
+  /* AG Grid: smaller text + row height for mobile */
+  .ag-theme-alpine-dark {
+    --ag-font-size: 12px;
+    --ag-row-height: 34px;
+    --ag-header-height: 34px;
+  }
+
+  .ag-theme-alpine-dark .ag-cell {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  /* Make modal grid use most of the screen */
+  .tt-modal-grid .ag-root-wrapper {
+    height: calc(100vh - 170px) !important;
+  }
+
+  /* Dials stack is already responsive via Bootstrap cols,
+     but reduce spacing a bit */
+  .dials-row {
+    margin-top: 6px;
+  }
+}
