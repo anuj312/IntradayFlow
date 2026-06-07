@@ -1331,7 +1331,7 @@ def sectors_page():
                                 {"label": "Sort: RVOLm Mean", "value": "RVOLmMean"},
                                 {"label": "Sort: DirR (mean)", "value": "DirR"},
                             ],
-                            value="RVOLmMean",
+                            value="RVOLm",
                             inline=True,
                             className="sectors-sort ms-2 mb-0",
                         ),
