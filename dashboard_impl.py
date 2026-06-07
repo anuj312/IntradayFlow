@@ -1838,7 +1838,7 @@ def update_top_stats(_):
     Input("sectors-sort", "value"),
 )
 def render_sector_bars(_n, sort_by):
-    sort_by = (sort_by or "RVOLmMean").strip()
+    sort_by = (sort_by or "RVOLm").strip()
 
     try:
         if sort_by == "DirR":
