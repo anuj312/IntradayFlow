@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>TurboTrades — Sign in</title>
+  <meta name="color-scheme" content="dark"/>
+
+  <style>
+    :root {
+      --bg0: #030408;
+      --bg1: #080a14;
+      --accent-rgb: 99, 102, 241;       /* Indigo */
+      --accent2-rgb: 168, 85, 247;     /* Purple */
+      --accent3-rgb: 6, 182, 212;      /* Cyan */
+      
+      --card-bg: rgba(10, 12, 22, 0.45);
+      --card-border: rgba(255, 255, 255, 0.06);
+      --card-highlight: rgba(255, 255, 255, 0.12);
+      
+      --input-bg: rgba(5, 7, 15, 0.65);
+      --input-border: rgba(255, 255, 255, 0.08);
+      --input-focus: rgba(99, 102, 241, 0.5);
+      
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-dark: #6b7280;
+      
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --danger: #ef4444;
+      --good: #10b981;
+      
+      --font-sans: 'SF Pro Display', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      width: 100%;
+      background-color: var(--bg0);
+    }
+
+    body {
+      color: var(--text);
+      font-family: var(--font-sans);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(var(--accent-rgb), 0.12) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(var(--accent2-rgb), 0.08) 0px, transparent 50%),
+        radial-gradient(at 50% 100%, rgba(var(--accent3-rgb), 0.05) 0px, transparent 50%),
+        linear-gradient(180deg, var(--bg0), var(--bg1));
+      background-attachment: fixed;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      perspective: 1000px;
+    }
+
+    /* Ambient animated blurred nodes */
+    .glow-container {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .glow-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(140px);
+      opacity: 0.15;
+      mix-blend-mode: screen;
+      pointer-events: none;
+    }
+
+    .glow-orb-1 {
+      top: 15%;
+      left: 15%;
+      width: 45vw;
+      height: 45vw;
+      background: radial-gradient(circle, rgba(var(--accent-rgb), 0.8) 0%, rgba(var(--accent3-rgb), 0.2) 100%);
+      animation: shiftOrbit 24s ease-in-out infinite alternate;
+    }
+
+    .glow-orb-2 {
+      bottom: 10%;
+      right: 15%;
+      width: 35vw;
+      height: 35vw;
+      background: radial-gradient(circle, rgba(var(--accent2-rgb), 0.8) 0%, rgba(var(--accent-rgb), 0.2) 100%);
+      animation: shiftOrbit 30s ease-in-out infinite alternate-reverse;
+    }
+
+    @keyframes shiftOrbit {
+      0% { transform: translate(0, 0) rotate(0deg) scale(1); }
+      50% { transform: translate(80px, -50px) rotate(180deg) scale(1.15); }
+      100% { transform: translate(-40px, 80px) rotate(360deg) scale(0.9); }
+    }
+
+    /* Glassmorphic Container */
+    .wrapper {
+      position: relative;
+      z-index: 10;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      padding: 24px;
+      animation: floatCard 入 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes floatCard {
+      0% { opacity: 0; transform: translateY(40px) rotateX(10deg); }
+      100% { opacity: 1; transform: translateY(0) rotateX(0deg); }
+    }
+
+    .card {
+      width: 440px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-top-color: var(--card-highlight);
+      border-left-color: var(--card-highlight);
+      border-radius: 24px;
+      box-shadow: 
+        0 4px 30px rgba(0, 0, 0, 0.4),
+        0 20px 50px rgba(0, 0, 0, 0.6),
+        inset 0 1px 1px rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      padding: 40px;
+      transition: box-shadow 0.4s ease, border-color 0.4s ease;
+    }
+
+    .card:hover {
+      border-color: rgba(var(--accent-rgb), 0.2);
+      box-shadow: 
+        0 4px 30px rgba(0, 0, 0, 0.4),
+        0 24px 60px rgba(var(--accent-rgb), 0.12),
+        inset 0 1px 2px rgba(255, 255, 255, 0.1);
+    }
+
+    /* Header styling */
+    .head {
+      margin-bottom: 36px;
+      text-align: center;
+    }
+
+    .brand {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    /* Geometric Procedural Premium Logo */
+    .logo {
+      width: 56px;
+      height: 56px;
+      position: relative;
+      background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.3), rgba(var(--accent2-rgb), 0.05));
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      overflow: hidden;
+    }
+
+    .logo::before {
+      content: '';
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      background: linear-gradient(135deg, rgba(var(--accent-rgb), 1), rgba(var(--accent2-rgb), 1));
+      transform: rotate(45deg);
+      border-radius: 4px;
+      box-shadow: 0 0 15px rgba(var(--accent-rgb), 0.6);
+      animation: heartbeat 3s infinite ease-in-out;
+    }
+
+    .logo::after {
+      content: '';
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      background: var(--bg0);
+      transform: rotate(45deg);
+      border-radius: 2px;
+    }
+
+    @keyframes heartbeat {
+      0%, 100% { transform: rotate(45deg) scale(0.9); opacity: 0.8; }
+      50% { transform: rotate(45deg) scale(1.1); opacity: 1; filter: brightness(1.2); }
+    }
+
+    .title h1 {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #ffffff 30%, #a5b4fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
+    }
+
+    .title p {
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 400;
+      letter-spacing: 0.2px;
+    }
+
+    /* Form Fields */
+    .body {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .field {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .label {
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      padding-left: 4px;
+    }
+
+    .label-required {
+      color: var(--text-dark);
+      font-size: 9px;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .input {
+      width: 100%;
+      height: 48px;
+      padding: 0 16px;
+      background-color: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 12px;
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 15px;
+      outline: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .input::placeholder {
+      color: var(--text-dark);
+      opacity: 0.8;
+    }
+
+    .input:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+      background-color: rgba(5, 7, 15, 0.8);
+    }
+
+    .input:focus {
+      border-color: var(--primary);
+      background-color: var(--bg0);
+      box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.15);
+    }
+
+    /* Option Row styling */
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 4px;
+    }
+
+    /* Custom Checkbox/Toggle Switch */
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-muted);
+      font-size: 13px;
+      cursor: pointer;
+      user-select: none;
+      font-weight: 400;
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 32px;
+      height: 18px;
+      background-color: rgba(255, 255, 255, 0.1);
+      border-radius: 100px;
+      transition: background-color 0.25s ease;
+    }
+
+    .toggle-switch::before {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      left: 2px;
+      top: 2px;
+      background-color: #ffffff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .toggle input {
+      display: none;
+    }
+
+    .toggle input:checked + .toggle-switch {
+      background-color: var(--primary);
+    }
+
+    .toggle input:checked + .toggle-switch::before {
+      transform: translateX(14px);
+    }
+
+    /* Login Action Button */
+    .btn {
+      position: relative;
+      width: 100%;
+      height: 48px;
+      margin-top: 8px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #ffffff;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--primary) 0%, rgba(var(--accent2-rgb), 1) 100%);
+      box-shadow: 
+        0 4px 20px rgba(var(--accent-rgb), 0.25),
+        inset 0 1px 1px rgba(255, 255, 255, 0.2);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow: hidden;
+    }
+
+    .btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(var(--accent2-rgb), 1) 0%, var(--primary) 100%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      z-index: 1;
+    }
+
+    .btn:hover::before {
+      opacity: 1;
+    }
+
+    .btn-text {
+      position: relative;
+      z-index: 2;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 
+        0 6px 24px rgba(var(--accent-rgb), 0.35),
+        inset 0 1px 1px rgba(255, 255, 255, 0.3);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+      box-shadow: 
+        0 2px 10px rgba(var(--accent-rgb), 0.2),
+        inset 0 1px 1px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn[disabled] {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+
+    /* Error alert output */
+    .err {
+      min-height: 18px;
+      color: var(--danger);
+      font-size: 13px;
+      font-weight: 500;
+      text-align: center;
+      transition: opacity 0.2s ease;
+      padding: 0 4px;
+    }
+
+    .err.shake {
+      animation: shake 0.3s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+    }
+
+    @keyframes shake {
+      10%, 90% { transform: translate3d(-1px, 0, 0); }
+      20%, 80% { transform: translate3d(2px, 0, 0); }
+      30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+      40%, 60% { transform: translate3d(4px, 0, 0); }
+    }
+
+    /* Footer styling */
+    .foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 28px;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .chip {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding: 6px 12px;
+      border-radius: 100px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      background: rgba(0, 0, 0, 0.3);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      color: var(--text-muted);
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: var(--text-dark);
+      transition: background-color 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .links {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+    }
+
+    .links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color 0.2s ease;
+      font-weight: 500;
+    }
+
+    .links a:hover {
+      color: var(--text);
+    }
+
+    .links-separator {
+      color: rgba(255, 255, 255, 0.1);
+    }
+
+    /* Loading Spinner */
+    .spinner {
+      display: none;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: #ffffff;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (max-width: 480px) {
+      .card {
+        padding: 32px 24px;
+        border-radius: 20px;
+      }
+      .title h1 {
+        font-size: 21px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="glow-container">
+    <div class="glow-orb glow-orb-1"></div>
+    <div class="glow-orb glow-orb-2"></div>
+  </div>
+
+  <div class="wrapper">
+    <div class="card">
+      <div class="head">
+        <div class="brand">
+          <div class="logo" aria-hidden="true"></div>
+          <div class="title">
+            <h1>TurboTrades</h1>
+            <p>Access Portal</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="body">
+        <div class="field">
+          <div class="label">
+            <span>User ID</span>
+            <span class="label-required">Required</span>
+          </div>
+          <div class="input-wrapper">
+            <input id="user" class="input" autocomplete="username" placeholder="Enter credential ID" />
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="label">
+            <span>Password</span>
+            <span class="label-required">Required</span>
+          </div>
+          <div class="input-wrapper">
+            <input id="password" class="input" type="password" autocomplete="current-password" placeholder="Enter security key" />
+          </div>
+        </div>
+
+        <div class="row">
+          <label class="toggle" title="Reveal Characters">
+            <input id="showpass" type="checkbox"/>
+            <span class="toggle-switch"></span>
+            Show password
+          </label>
+        </div>
+
+        <button id="btn" class="btn">
+          <span class="btn-text">
+            <span class="spinner" id="btnSpinner"></span>
+            <span id="btnText">Verify & Continue</span>
+          </span>
+        </button>
+        
+        <div id="err" class="err"></div>
+      </div>
+
+      <div class="foot">
+        <div class="chip" title="Node Connectivity Status">
+          <span class="dot" id="dot"></span>
+          <span id="statusTxt">Synchronizing...</span>
+        </div>
+        <div class="links">
+          <a href="/health" target="_blank" rel="noopener noreferrer">Diagnostic</a>
+          <span class="links-separator">|</span>
+          <a href="/auth/logout">Reset</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  function getNext() {
+    const u = new URL(window.location.href);
+    return u.searchParams.get("next") || "/dash/";
+  }
+
+  function setErr(msg){
+    const el = document.getElementById("err");
+    el.textContent = msg || "";
+    if(msg){
+      el.classList.remove("shake");
+      void el.offsetWidth; // Force DOM reflow to re-trigger the CSS keyframe
+      el.classList.add("shake");
+    }
+  }
+
+  function setServerStatus(ok){
+    const dot = document.getElementById("dot");
+    const txt = document.getElementById("statusTxt");
+    if(ok){
+      dot.style.backgroundColor = "var(--good)";
+      dot.style.boxShadow = "0 0 10px rgba(16, 185, 129, 0.4)";
+      txt.textContent = "Gateway Secured";
+    }else{
+      dot.style.backgroundColor = "var(--danger)";
+      dot.style.boxShadow = "0 0 10px rgba(239, 68, 110, 0.4)";
+      txt.textContent = "Terminal Offline";
+    }
+  }
+
+  async function status() {
+    try{
+      const r = await fetch("/auth/status", { credentials: "include" });
+      if (!r.ok) return { authed: false };
+      return await r.json();
+    }catch(e){
+      return { authed: false, offline: true };
+    }
+  }
+
+  async function pingHealth(){
+    try{
+      const r = await fetch("/health", { cache:"no-store" });
+      setServerStatus(r.ok);
+    }catch(e){
+      setServerStatus(false);
+    }
+  }
+
+  async function login() {
+    setErr("");
+    const btn = document.getElementById("btn");
+    const spinner = document.getElementById("btnSpinner");
+    const btnText = document.getElementById("btnText");
+    
+    btn.disabled = true;
+    spinner.style.display = "inline-block";
+    btnText.textContent = "Verifying Credentials...";
+
+    const user = document.getElementById("user").value || "";
+    const password = document.getElementById("password").value || "";
+
+    try{
+      const r = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ user, password })
+      });
+
+      if (r.ok) {
+        window.location.href = getNext();
+        return;
+      }
+
+      let msg = "Invalid user identification or security key";
+      try {
+        const j = await r.json();
+        if (j && j.detail) msg = j.detail;
+      } catch(e) {}
+      setErr(msg);
+    } catch(e){
+      setErr("Connectivity drop. Please try again.");
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = "none";
+      btnText.textContent = "Verify & Continue";
+    }
+  }
+
+  // Bind password character reveal action to input types
+  document.getElementById("showpass").addEventListener("change", (e) => {
+    const pw = document.getElementById("password");
+    pw.type = e.target.checked ? "text" : "password";
+  });
+
+  // Evaluate status immediately and begin health loops
+  (async function () {
+    await pingHealth();
+    const s = await status();
+    if (s && s.authed) window.location.href = getNext();
+    
+    // Continual background state synchronization
+    setInterval(pingHealth, 10000);
+  })();
+
+  document.getElementById("btn").addEventListener("click", (e) => { e.preventDefault(); login(); });
+  document.getElementById("password").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); login(); }
+  });
+</script>
+</body>
+</html>

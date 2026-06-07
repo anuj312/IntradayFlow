@@ -3346,3 +3346,34 @@ td:first-child { text-align: left; }
     width: 1400px !important;
   }
 }
+
+.blurred {
+  filter: blur(8px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;               /* default visible until JS hides */
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(6px);
+}
+
+.login-card {
+  width: min(420px, 92vw);
+  padding: 18px;
+  border-radius: 14px;
+  background: rgba(15,15,18,0.95);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+.login-msg {
+  min-height: 20px;
+  color: #ff6b6b;
+  font-size: 0.95rem;
+}
