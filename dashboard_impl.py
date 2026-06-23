@@ -189,7 +189,7 @@ SECTOR_DEFINITIONS = {
         "CONCOR", "DELHIVERY", "INDIGO",
         "INDHOTEL", "IRCTC",
         "BLUESTARCO", "GMRAIRPORT",
-        "PAGEIND", "UPL"
+        "PAGEIND", "UPL", "ADANIPORTS"
     ],
     "DEFENCE": [
         "ABB", "BDL", "BEL", "BHEL",
