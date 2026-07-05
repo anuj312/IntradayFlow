@@ -1751,13 +1751,14 @@ dash_app.layout = dbc.Container(
                     # --- Logout button (top-right) ---
                     dbc.Col(
                         dbc.Button(
-                            "Logout",
+                            "LogOff",
                             href="/auth/logout",   # FastAPI logout
                             external_link=True,    # do a normal navigation (not Dash routing)
-                            color="danger",
+                            color="secondary",
                             outline=True,
                             size="sm",
                             className="tt-logout-btn",
+                            style={"fontWeight": "700"},
                         ),
                         width="auto",
                     ),
