@@ -1,4 +1,10 @@
 # heatmap_impl.py
+#
+# Treemap Heatmap builder for TurboTrades
+# - Solid black plot/paper background (removes grey strip)
+# - No top title text
+# - No explicit "MARKET" root node (sectors are top-level: parent="")
+# - Sector-big / stock-small font handled by assets/heatmap_fonts.js
 
 import os
 from typing import Any, Dict, List
@@ -7,9 +13,6 @@ import pandas as pd
 import plotly.graph_objects as go
 
 
-# =============================================================================
-# CONFIG
-# =============================================================================
 HEATMAP_TOP_N_PER_SECTOR = int(os.getenv("HEATMAP_TOP_N_PER_SECTOR", "18"))
 HEATMAP_ADD_OTHERS = os.getenv("HEATMAP_ADD_OTHERS", "1").strip().lower() not in ("0", "false", "no")
 HEATMAP_PACKING = os.getenv("HEATMAP_PACKING", "squarify").strip()
@@ -22,9 +25,6 @@ HEATMAP_MAX_STOCK_LABEL_CHARS = int(os.getenv("HEATMAP_MAX_STOCK_LABEL_CHARS", "
 _BG = "#000000"
 
 
-# =============================================================================
-# HELPERS
-# =============================================================================
 def _empty_fig(msg: str) -> go.Figure:
     fig = go.Figure()
     fig.update_layout(
@@ -111,9 +111,6 @@ def _topn_plus_others_heatmap(sdf: pd.DataFrame, n: int, add_others: bool, size_
     return top
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
 def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
     if not rows:
         return _empty_fig("Heatmap warming up…")
@@ -148,7 +145,6 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
     if size_col not in ("abs_pct", "pos_pct", "turnover"):
         size_col = "abs_pct"
 
-    # sector order by mean DirR desc
     sec_mean_dirr = df.groupby("sector_key")["dirr"].mean().to_dict()
     sector_order = sorted(
         df["sector_key"].unique().tolist(),
@@ -158,7 +154,6 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
     if not sector_order:
         return _empty_fig("Heatmap: no sectors to display")
 
-    # sector weight by rank^power
     nsec = len(sector_order)
     sector_weight: Dict[str, float] = {}
     for i, sec in enumerate(sector_order):
@@ -193,7 +188,6 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
         sec_id = f"sec:{sec}"
         w_sec = float(sector_weight.get(sec, 1.0))
 
-        # sector node (top-level => no MARKET tile)
         labels.append(sec_label)
         texts.append(unicode_bold(sec_label))
         ids.append(sec_id)
@@ -246,7 +240,7 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
                 showscale=False,
                 line=dict(width=1.2, color="rgba(255,255,255,0.22)"),
             ),
-            root_color=_BG,          # makes the root strip black
+            root_color=_BG,
             branchvalues="total",
             sort=False,
             tiling=dict(packing=HEATMAP_PACKING, pad=2),
@@ -257,13 +251,13 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
                 "<br>DirR: %{customdata[1]:.2f}"
                 "<extra></extra>"
             ),
-            pathbar=dict(visible=False),  # ONLY supported option in your Plotly version
+            pathbar=dict(visible=False),
         )
     )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor=_BG,   # makes any leftover reserved area black
+        paper_bgcolor=_BG,
         plot_bgcolor=_BG,
         margin=dict(l=8, r=8, t=8, b=8),
         uniformtext_minsize=10,
