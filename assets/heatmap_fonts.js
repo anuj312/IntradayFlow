@@ -34,7 +34,7 @@
         const isSector = id.startsWith("sec:");
 
         if (textEl) {
-          textEl.style.fontSize = isSector ? "15px" : "10px";
+          textEl.style.fontSize = isSector ? "12px" : "10px";
           textEl.style.fontWeight = isSector ? "800" : "500";
         }
       });
