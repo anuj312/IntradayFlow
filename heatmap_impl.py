@@ -1,10 +1,12 @@
 # heatmap_impl.py
 #
 # Treemap Heatmap builder for TurboTrades
-# - Solid black plot/paper background (removes grey strip)
+# - Solid black plot/paper background
 # - No top title text
 # - No explicit "MARKET" root node (sectors are top-level: parent="")
 # - Sector-big / stock-small font handled by assets/heatmap_fonts.js
+# - Sector order: interleaved by sign, sorted by ABS(mean DirR):
+#       most negative, most positive, 2nd most negative, 2nd most positive, ...
 
 import os
 from typing import Any, Dict, List
@@ -111,6 +113,41 @@ def _topn_plus_others_heatmap(sdf: pd.DataFrame, n: int, add_others: bool, size_
     return top
 
 
+def _sector_order_interleaved_neg_pos_by_abs(sec_mean: Dict[str, float]) -> List[str]:
+    """
+    Order like: -4, +3, -2, +1.5, -0.9 ...
+    (negatives by abs desc, positives by abs desc, then interleave neg then pos)
+    Zeros go at end.
+    """
+    secs = list(sec_mean.keys())
+
+    def val(s: str) -> float:
+        try:
+            return float(sec_mean.get(s, 0.0) or 0.0)
+        except Exception:
+            return 0.0
+
+    neg = [s for s in secs if val(s) < 0.0]
+    pos = [s for s in secs if val(s) > 0.0]
+    zer = [s for s in secs if abs(val(s)) <= 1e-12]
+
+    neg.sort(key=lambda s: abs(val(s)), reverse=True)
+    pos.sort(key=lambda s: abs(val(s)), reverse=True)
+
+    out: List[str] = []
+    i = j = 0
+    while i < len(neg) or j < len(pos):
+        if i < len(neg):
+            out.append(neg[i])
+            i += 1
+        if j < len(pos):
+            out.append(pos[j])
+            j += 1
+
+    out.extend(zer)
+    return out
+
+
 def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
     if not rows:
         return _empty_fig("Heatmap warming up…")
@@ -145,15 +182,14 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
     if size_col not in ("abs_pct", "pos_pct", "turnover"):
         size_col = "abs_pct"
 
+    # --- sector order: interleaved neg/pos by ABS(mean DirR) ---
     sec_mean_dirr = df.groupby("sector_key")["dirr"].mean().to_dict()
-    sector_order = sorted(
-        df["sector_key"].unique().tolist(),
-        key=lambda s: float(sec_mean_dirr.get(s, 0.0)),
-        reverse=True,
-    )
+    sector_order = _sector_order_interleaved_neg_pos_by_abs(sec_mean_dirr)
+
     if not sector_order:
         return _empty_fig("Heatmap: no sectors to display")
 
+    # Sector sizes: rank^POWER (based on this order)
     nsec = len(sector_order)
     sector_weight: Dict[str, float] = {}
     for i, sec in enumerate(sector_order):
@@ -175,6 +211,7 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
         if sdf.empty:
             continue
 
+        # stock order inside sector by %Change desc
         sdf.sort_values("pct", ascending=False, inplace=True)
 
         sdf = _topn_plus_others_heatmap(
@@ -188,6 +225,7 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
         sec_id = f"sec:{sec}"
         w_sec = float(sector_weight.get(sec, 1.0))
 
+        # sector node (top-level)
         labels.append(sec_label)
         texts.append(unicode_bold(sec_label))
         ids.append(sec_id)
@@ -196,6 +234,7 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
         colors.append(float(sdf["pct"].mean()))
         customdata.append([float(sdf["turnover"].sum()), float(sdf["dirr"].mean()), float(sdf["pct"].mean())])
 
+        # leaf sizing inside sector
         w = sdf[size_col].astype(float)
         if float(w.sum()) <= 1e-9:
             w = (sdf["abs_pct"].astype(float) + 0.01)
