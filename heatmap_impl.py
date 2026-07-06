@@ -2,10 +2,10 @@
 #
 # Treemap Heatmap builder for TurboTrades
 # - Returns Plotly Figure (no Dash app code)
-# - Removes top title text
-# - Removes root "MARKET" block by making sectors top-level (parent="")
-# - Sector labels are made bold via Unicode (Plotly treemap <b> is unreliable)
-# - Sector-big / stock-small font is handled via assets/heatmap_fonts.js (JS)
+# - No top title text
+# - No explicit "MARKET" root node (sectors are top-level: parent="")
+# - Removes the grey "root strip" by setting root_color transparent
+# - Sector-big / stock-small font is handled by assets/heatmap_fonts.js (JS)
 
 import os
 from typing import Any, Dict, List
@@ -33,6 +33,31 @@ HEATMAP_MAX_STOCK_LABEL_CHARS = int(os.getenv("HEATMAP_MAX_STOCK_LABEL_CHARS", "
 # =============================================================================
 # HELPERS
 # =============================================================================
+def _empty_fig(msg: str) -> go.Figure:
+    fig = go.Figure()
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=8, r=8, t=8, b=8),
+        title=None,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        annotations=[
+            dict(
+                text=msg,
+                showarrow=False,
+                x=0.5,
+                y=0.5,
+                xref="paper",
+                yref="paper",
+                font=dict(size=16),
+            )
+        ],
+    )
+    return fig
+
+
 def _unicode_bold_char(c: str) -> str:
     o = ord(c)
     if 65 <= o <= 90:   # A-Z
@@ -53,17 +78,14 @@ def heatmap_short_symbol(sym: str, max_len: int = HEATMAP_MAX_STOCK_LABEL_CHARS)
     sym = str(sym)
     if sym == "OTHERS":
         return sym
-    if len(sym) <= max_len:
-        return sym
-    return sym[: max_len - 1] + "…"
+    return sym if len(sym) <= max_len else sym[: max_len - 1] + "…"
 
 
 def _topn_plus_others_heatmap(sdf: pd.DataFrame, n: int, add_others: bool, size_col: str) -> pd.DataFrame:
     """
     sdf must already be sorted.
     Adds an OTHERS leaf:
-      - size metric = sum(size_col)
-      - pct color = weighted avg pct by size metric (fallback if weights ~0)
+      - pct color = weighted avg pct by size metric
       - dirr = weighted avg dirr
       - turnover = sum(turnover)
     """
@@ -109,33 +131,34 @@ def _topn_plus_others_heatmap(sdf: pd.DataFrame, n: int, add_others: bool, size_
 # MAIN FIGURE BUILDER
 # =============================================================================
 def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
-    """
-    rows expected keys:
-      - sector_key, sector_label, symbol, pct, dirr, value (turnover proxy)
-    """
     if not rows:
-        fig = go.Figure()
-        fig.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            margin=dict(l=8, r=8, t=8, b=8),
-            title=None,
-            annotations=[dict(text="Loading heatmap…", showarrow=False, x=0.5, y=0.5)],
-        )
-        return fig
+        return _empty_fig("Heatmap warming up…")
 
     df = pd.DataFrame(rows)
+
+    # If df is shape (1,0) due to rows like [{}], df.empty becomes True
     if df.empty:
-        return go.Figure()
+        return _empty_fig("Heatmap: no usable data yet")
 
-    # Normalize columns
+    required = {"sector_key", "sector_label", "symbol", "pct", "dirr"}
+    if not required.issubset(set(df.columns)):
+        missing = sorted(required - set(df.columns))
+        return _empty_fig(f"Heatmap: missing columns {missing}")
+
+    # Normalize turnover
     if "turnover" not in df.columns:
-        df["turnover"] = df["value"].astype(float)
+        if "value" in df.columns:
+            df["turnover"] = pd.to_numeric(df["value"], errors="coerce")
+        else:
+            df["turnover"] = 0.0
 
-    df["pct"] = df["pct"].astype(float)
-    df["dirr"] = df["dirr"].astype(float)
-    df["turnover"] = df["turnover"].astype(float)
+    df["pct"] = pd.to_numeric(df["pct"], errors="coerce")
+    df["dirr"] = pd.to_numeric(df["dirr"], errors="coerce")
+    df["turnover"] = pd.to_numeric(df["turnover"], errors="coerce").fillna(0.0)
+
+    df = df.dropna(subset=["sector_key", "sector_label", "symbol", "pct", "dirr"])
+    if df.empty:
+        return _empty_fig("Heatmap: waiting for ticks / stats…")
 
     # Sizing metrics
     df["abs_pct"] = df["pct"].abs()
@@ -152,6 +175,9 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
         key=lambda s: float(sec_mean_dirr.get(s, 0.0)),
         reverse=True,
     )
+    if not sector_order:
+        return _empty_fig("Heatmap: no sectors to display")
+
     nsec = len(sector_order)
 
     # Sector sizes: rank^POWER
@@ -163,7 +189,7 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
     # Color range symmetric around 0
     mx = float(max(0.5, df["pct"].abs().max()))
 
-    # Build WITHOUT root node => no "MARKET" tile
+    # Build WITHOUT explicit root node => no "MARKET" tile
     labels: List[str] = []
     texts: List[str] = []
     ids: List[str] = []
@@ -177,10 +203,9 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
         if sdf.empty:
             continue
 
-        # Stocks sorted by %Change desc (change to "dirr" if you prefer)
+        # Stock order inside sector by %Change desc (change to "dirr" if you prefer)
         sdf.sort_values("pct", ascending=False, inplace=True)
 
-        # Limit + OTHERS
         sdf = _topn_plus_others_heatmap(
             sdf,
             n=int(HEATMAP_TOP_N_PER_SECTOR),
@@ -223,13 +248,16 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
             colors.append(float(r["pct"]))
             customdata.append([float(r["turnover"]), float(r["dirr"]), float(r["pct"])])
 
+    if not labels:
+        return _empty_fig("Heatmap: no tiles to render")
+
     fig = go.Figure(
         go.Treemap(
             labels=labels,
             text=texts,
             texttemplate="%{text}",
             textinfo="text",
-            textfont=dict(size=10),  # stocks small; sectors enlarged by JS
+            textfont=dict(size=10),  # stocks baseline small; sectors enlarged via JS
             ids=ids,
             parents=parents,
             values=values,
@@ -247,7 +275,8 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
                 showscale=False,
                 line=dict(width=1.2, color="rgba(255,255,255,0.22)"),
             ),
-            branchvalues="total",  # IMPORTANT: prevents double-count sizing
+            root_color="rgba(0,0,0,0)",  # <-- removes the grey root strip at top
+            branchvalues="total",
             sort=False,
             tiling=dict(packing=HEATMAP_PACKING, pad=2),
             hovertemplate=(
@@ -268,6 +297,6 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
         margin=dict(l=8, r=8, t=8, b=8),
         uniformtext_minsize=10,
         uniformtext_mode="hide",
-        title=None,  # removes any top title text
+        title=None,
     )
     return fig
