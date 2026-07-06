@@ -3377,3 +3377,12 @@ td:first-child { text-align: left; }
   color: #ff6b6b;
   font-size: 0.95rem;
 }
+
+#market-heatmap,
+#market-heatmap .js-plotly-plot,
+#market-heatmap .plot-container {
+  background: #000 !important;
+}
+#market-heatmap .main-svg .bg {
+  fill: #000 !important;
+}
