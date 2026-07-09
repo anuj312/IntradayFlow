@@ -1470,7 +1470,7 @@ def sectors_page():
             dcc.Graph(
                 id="market-heatmap",
                 config={"displayModeBar": True, "displaylogo": False},
-                style={"height": "68vh", "width": "100%"},
+                style={"height": "75vh", "width": "100%"},
             ),
 
             html.Hr(),
