@@ -1639,7 +1639,7 @@ dash_app.layout = dbc.Container(
     children=[
         dcc.Location(id="url"),
         dcc.Store(id="page-store"),
-        dcc.Interval(id="top_refresh", interval=5000, n_intervals=0),
+        dcc.Interval(id="top_refresh", interval=1000, n_intervals=0),
 
         html.Div(
             dbc.Row(
