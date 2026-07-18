@@ -3386,3 +3386,58 @@ td:first-child { text-align: left; }
 #market-heatmap .main-svg .bg {
   fill: #000 !important;
 }
+
+/* =====================================
+   Make Grid Headers Bold
+===================================== */
+
+.ag-theme-alpine-dark .ag-header-cell-text {
+  font-weight: 700 !important;
+  letter-spacing: 0.5px;
+}
+
+/* =====================================================
+   SECTOR MODAL – MATCH TOP 15 STYLE
+===================================================== */
+
+.modal-content {
+  background: linear-gradient(
+    180deg,
+    rgba(25, 28, 35, 0.95) 0%,
+    rgba(18, 21, 28, 0.95) 100%
+  ) !important;
+
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* Header same tone */
+.modal-header {
+  background: transparent !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Remove default white Bootstrap look */
+.modal-body {
+  background: transparent !important;
+}
+
+
+/* ==========================================
+   SECTOR MODAL CLOSE BUTTON STYLE
+========================================== */
+
+.tt-modal-close-btn {
+  font-weight: 700 !important;
+  font-size: 14px !important;
+  padding: 6px 14px !important;
+  border-radius: 10px !important;
+  letter-spacing: 0.5px;
+  transition: all 0.2s ease-in-out;
+}
+
+.tt-modal-close-btn:hover {
+  transform: scale(1.05);
+}

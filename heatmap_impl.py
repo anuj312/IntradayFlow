@@ -313,6 +313,7 @@ def build_market_heatmap_figure(rows: List[Dict[str, Any]]) -> go.Figure:
 
     fig.update_layout(
         template="plotly_dark",
+        autosize=True,
         paper_bgcolor=_BG,
         plot_bgcolor=_BG,
         margin=dict(l=6, r=6, t=6, b=6),

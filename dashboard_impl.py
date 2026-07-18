@@ -1272,215 +1272,246 @@ def _sector_modal_coldefs():
 
 
 def sector_modal_component():
+
     grid_opts = {
         "getRowId": {"function": "params.data.Symbol"},
-        "alwaysShowVerticalScroll": True,
         "animateRows": True,
-        "suppressHeaderMenuButton": True,
-        "suppressHeaderFilterButton": False,
-        "onGridReady": {"function": "params.api.sizeColumnsToFit();"},
-        "onGridSizeChanged": {"function": "params.api.sizeColumnsToFit();"},
+        "alwaysShowVerticalScroll": True,
+        "domLayout": "normal",
     }
 
     header = html.Div(
         [
-            html.Div(id="sector-modal-title", children="SECTOR", className="tt-modal-title"),
+            html.Div(
+                id="sector-modal-title",
+                className="tt-modal-title",
+                children="SECTOR",
+            ),
             dcc.Link(
                 dbc.Button(
                     "Close",
                     color="secondary",
                     outline=True,
-                    className="tt-modal-close-btn",
+                    size="sm",
+                    className="tt-modal-close-btn",   # ✅ Added class
                 ),
                 href=BASE,
                 refresh=False,
-                className="tt-modal-close-link",
             ),
         ],
-        className="tt-modal-header tt-modal-header--flex",
+        className="d-flex justify-content-between align-items-center w-100",
     )
 
     return dbc.Modal(
         [
-            dbc.ModalHeader(header, close_button=False, className="tt-modal-header-wrap"),
+            dbc.ModalHeader(header, close_button=False),
+
             dbc.ModalBody(
-                html.Div(
-                    dag.AgGrid(
-                        id="sector-modal-grid",
-                        className="ag-theme-alpine-dark grid-wrap compact-grid tt-modal-grid",
-                        columnDefs=_sector_modal_coldefs(),
-                        rowData=[],
-                        defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                        dashGridOptions=grid_opts,
-                        style={"height": "67vh", "width": "100%"},
-                    ),
-                    className="tt-modal-gridwrap",
+                dag.AgGrid(
+                    id="sector-modal-grid",
+                    className="ag-theme-alpine-dark tt-modal-grid",
+                    columnDefs=_sector_modal_coldefs(),
+                    rowData=[],
+                    defaultColDef={
+                        "sortable": True,
+                        "filter": True,
+                        "resizable": True,
+                        "flex": 1,
+                    },
+                    dashGridOptions=grid_opts,
+                    style={
+                        "height": "65vh",
+                        "width": "100%",
+                    },
                 ),
-                className="tt-modal-body",
             ),
         ],
         id="sector-modal",
         is_open=False,
         size="xl",
-        fullscreen="md-down",
         centered=True,
-        scrollable=True,
+        fullscreen="md-down",
         backdrop=True,
         keyboard=True,
-        className="tt-modal",
-        contentClassName="tt-modal-content",
-        backdropClassName="tt-modal-backdrop",
     )
-
 
 # =============================================================================
 # PAGES
 # =============================================================================
 def sectors_page():
-    four_cols = [
+
+    # -----------------------------------------
+    # TOP 15 COLUMN DEFINITIONS (Stable)
+    # -----------------------------------------
+    top15_cols = [
         {
-            "colId": "stock",
             "field": "Symbol",
             "headerName": "STOCK",
             "cellRenderer": "SymbolCell",
-            "minWidth": 10,
-            "flex": 1,
+            "minWidth": 140,
             "headerClass": "h-left",
             "cellClass": "c-left",
         },
         {
-            "colId": "pctChg",
             "field": "%Change",
             "headerName": "%CHG",
             "cellRenderer": "PctPill",
-            "minWidth": 150,
-            "maxWidth": 150,
-            "suppressSizeToFit": True,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
+            "minWidth": 110,
+            "headerClass": "ag-right-aligned-header",
+            "cellClass": "ag-right-aligned-cell",
         },
         {
-            "colId": "rfactor",
             "field": "RFactor",
             "headerName": "MOMENTUM",
             "cellRenderer": "RfactorPill",
-            "minWidth": 125,
-            "maxWidth": 170,
-            "suppressSizeToFit": True,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
+            "minWidth": 110,
+            "headerClass": "ag-right-aligned-header",
+            "cellClass": "ag-right-aligned-cell",
         },
         {
-            "colId": "volume",
             "field": "Vol",
             "headerName": "VOLUME",
             "cellRenderer": "VolPill",
-            "minWidth": 140,
-            "maxWidth": 190,
-            "suppressSizeToFit": True,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
+            "minWidth": 120,
+            "headerClass": "ag-right-aligned-header",
+            "cellClass": "ag-right-aligned-cell",
         },
     ]
 
-    grid_opts = {
+    grid_options = {
         "getRowId": {"function": "params.data.Symbol"},
-        "alwaysShowVerticalScroll": False,
         "animateRows": False,
-        "suppressMenuHide": False,
-        "onGridReady": {"function": "params.api.sizeColumnsToFit();"},
-        "onGridSizeChanged": {"function": "params.api.sizeColumnsToFit();"},
+        "rowHeight": 40,
+        "headerHeight": 40,
+        "domLayout": "normal",
     }
+
+    def build_grid(grid_id, height):
+        return dag.AgGrid(
+            id=grid_id,
+            className="ag-theme-alpine-dark grid-wrap",
+            columnDefs=top15_cols,
+            rowData=[],
+            defaultColDef={
+                "sortable": True,
+                "resizable": True,
+                "flex": 1,   # ✅ Desktop expands nicely
+            },
+            dashGridOptions=grid_options,
+            style={"height": height, "width": "100%"},
+        )
 
     return html.Div(
         [
             dcc.Interval(id="refresh_sectors", interval=5000, n_intervals=0),
 
+            # -----------------------------------------
+            # HEADER
+            # -----------------------------------------
             dbc.Row(
                 [
-                    dbc.Col(html.H4("Sectors", className="page-title sectors-title mb-0"), width="auto"),
+                    dbc.Col(
+                        html.H4("Sectors", className="page-title mb-0"),
+                        width="auto",
+                    ),
                     dbc.Col(
                         dbc.RadioItems(
                             id="sectors-sort",
                             options=[
                                 {"label": "Sort: RVOLm", "value": "RVOLm"},
                                 {"label": "Sort: RVOLm Mean", "value": "RVOLmMean"},
-                                {"label": "Sort: Momentum (mean)", "value": "DirR"},
+                                {"label": "Sort: Momentum", "value": "DirR"},
                             ],
                             value="DirR",
                             inline=True,
-                            className="sectors-sort ms-2 mb-0",
+                            className="ms-2",
                         ),
                         width=True,
                     ),
                 ],
-                className="sectors-header align-items-center g-2 mb-2",
+                className="align-items-center g-2 mb-2",
             ),
 
             html.Div(id="sector-bars", className="sector-bars-wrap"),
+            html.Hr(),
+
+            # -----------------------------------------
+            # DESKTOP VIEW
+            # -----------------------------------------
             html.Div(
-                "Click a sector bar to open popup. "
-                "RVOLm = net paced rel vol (buy−sell). Momentum = signed mean directional rfactor.",
-                className="hint",
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            [
+                                html.H6("Top 15 Gainers"),
+                                build_grid("top15-gainers-grid", "350px"),
+                            ],
+                            md=6,
+                        ),
+                        dbc.Col(
+                            [
+                                html.H6("Top 15 Losers"),
+                                build_grid("top15-losers-grid", "350px"),
+                            ],
+                            md=6,
+                        ),
+                    ],
+                    className="g-3",
+                ),
+                className="desktop-only",
+            ),
+
+            # -----------------------------------------
+            # MOBILE VIEW (TABS)
+            # -----------------------------------------
+            html.Div(
+                dbc.Tabs(
+                    [
+                        dbc.Tab(
+                            label="Top 15 Gainers",
+                            children=build_grid(
+                                "top15-gainers-grid-m", "60vh"
+                            ),
+                        ),
+                        dbc.Tab(
+                            label="Top 15 Losers",
+                            children=build_grid(
+                                "top15-losers-grid-m", "60vh"
+                            ),
+                        ),
+                    ],
+                    className="top15-tabs",
+                ),
+                className="mobile-only",
             ),
 
             html.Hr(),
 
-            dbc.Row(
-                [
-                    dbc.Col(
-                        [
-                            html.H6("Top 15 Gainers", className="mt-1"),
-                            dag.AgGrid(
-                                id="top15-gainers-grid",
-                                className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=four_cols,
-                                rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                                dashGridOptions=grid_opts,
-                                style={"height": "min(520px, 48vh)", "width": "100%"},
-                            ),
-                        ],
-                        md=6,
-                    ),
-                    dbc.Col(
-                        [
-                            html.H6("Top 15 Losers", className="mt-1"),
-                            dag.AgGrid(
-                                id="top15-losers-grid",
-                                className="ag-theme-alpine-dark grid-wrap compact-grid",
-                                columnDefs=four_cols,
-                                rowData=[],
-                                defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                                dashGridOptions=grid_opts,
-                                style={"height": "min(520px, 48vh)", "width": "100%"},
-                            ),
-                        ],
-                        md=6,
-                    ),
-                ],
-                className="g-2",
-            ),
-
-            # ---------------------------
-            # HEATMAP (below Top 15)
-            # ---------------------------
-            html.Hr(),
-            html.H6("Heatmap", className="mt-1"),
+            # -----------------------------------------
+            # HEATMAP
+            # -----------------------------------------
+            html.H6("Heatmap"),
             dcc.Graph(
                 id="market-heatmap",
-                config={"displayModeBar": True, "displaylogo": False},
+                config={
+                    "displayModeBar": True,
+                    "displaylogo": False,
+                    "responsive": True,
+                },
                 style={"height": "75vh", "width": "100%"},
             ),
 
             html.Hr(),
 
+            # -----------------------------------------
+            # DIALS
+            # -----------------------------------------
             dbc.Row(
                 [
                     dbc.Col(dial_component("sentiment", "BIAS"), md=6),
                     dbc.Col(dial_component("pcr", "PCR"), md=6),
                 ],
-                className="g-2 dials-row",
+                className="g-3",
             ),
         ],
         className="page-wrap",
@@ -1674,7 +1705,7 @@ dash_app.layout = dbc.Container(
                         width="auto",
                     ),
                 ],
-                className="align-items-center g-2",
+                className="align-items-center g-2 flex-wrap",
             ),
             className="topbar-wrap",
         ),
@@ -2155,11 +2186,15 @@ def update_dials(_):
 @dash_app.callback(
     Output("top15-gainers-grid", "rowData"),
     Output("top15-losers-grid", "rowData"),
+    Output("top15-gainers-grid-m", "rowData"),
+    Output("top15-losers-grid-m", "rowData"),
     Input("refresh_sectors", "n_intervals"),
 )
 def update_rfactor_leaderboards(_):
     with CACHE_LOCK:
-        return list(CACHE.get("top15_gainers") or []), list(CACHE.get("top15_losers") or [])
+        g = list(CACHE.get("top15_gainers") or [])
+        l = list(CACHE.get("top15_losers") or [])
+    return g, l, g, l
 
 
 @dash_app.callback(
