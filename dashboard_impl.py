@@ -1185,60 +1185,67 @@ def _extract_sector_from_path(pn: str) -> Optional[str]:
 
 def _sector_modal_coldefs():
     return [
-        {"field": "Symbol", "headerName": "STOCK", "minWidth": 120, "flex": 1},
-        {"field": "Company", "headerName": "COMPANY", "minWidth": 180, "flex": 2},
-
+        {
+            "field": "Symbol",
+            "headerName": "STOCK",
+            "minWidth": 120,
+            "flex": 1,
+            "cellRenderer": "SymbolCell",
+        },
+        {
+            "field": "Company",
+            "headerName": "COMPANY",
+            "minWidth": 180,
+            "flex": 2,
+            "cellRenderer": "CompanyLinkCell",
+        },
         {
             "field": "DirR",
             "headerName": "MOMENTUM",
-            "type": "rightAligned",
             "minWidth": 110,
             "flex": 1,
-            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) : ''"},
+            "type": "rightAligned",
+            "cellRenderer": "Num2Cell",
             "cellClassRules": {
                 "cell-pos": "params.value > 0",
-                "cell-neg": "params.value < 0"
-            }
+                "cell-neg": "params.value < 0",
+            },
         },
-
         {
             "field": "Price",
             "headerName": "PRICE",
-            "type": "rightAligned",
             "minWidth": 110,
             "flex": 1,
-            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) : ''"},
+            "type": "rightAligned",
+            "cellRenderer": "Num2Cell",
         },
-
         {
             "field": "%Change",
             "headerName": "%CHG",
-            "type": "rightAligned",
-            "minWidth": 100,
+            "minWidth": 110,
             "flex": 1,
-            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) + '%' : ''"},
+            "type": "rightAligned",
+            "cellRenderer": "Pct2Cell",
             "cellClassRules": {
                 "cell-pos": "params.value > 0",
-                "cell-neg": "params.value < 0"
-            }
+                "cell-neg": "params.value < 0",
+            },
         },
-
         {
             "field": "Gap%",
             "headerName": "GAP %",
-            "type": "rightAligned",
             "minWidth": 100,
             "flex": 1,
-            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) + '%' : ''"},
+            "type": "rightAligned",
+            "cellRenderer": "Pct2Cell",
         },
-
         {
             "field": "RVOLm",
             "headerName": "RVOLm",
-            "type": "rightAligned",
             "minWidth": 100,
             "flex": 1,
-            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) : ''"},
+            "type": "rightAligned",
+            "cellRenderer": "Num2Cell",
         },
     ]
 
