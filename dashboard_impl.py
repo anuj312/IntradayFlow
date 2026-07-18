@@ -1185,85 +1185,62 @@ def _extract_sector_from_path(pn: str) -> Optional[str]:
 
 def _sector_modal_coldefs():
     return [
+        {"field": "Symbol", "headerName": "STOCK", "minWidth": 120, "flex": 1},
+        {"field": "Company", "headerName": "COMPANY", "minWidth": 180, "flex": 2},
+
         {
-            "colId": "stock",
-            "field": "Symbol",
-            "headerName": "STOCK",
-            "cellRenderer": "SymbolCell",
-            "minWidth": 130,
-            "maxWidth": 170,
-            "headerClass": "h-left",
-            "cellClass": "c-left",
-        },
-        {
-            "colId": "company",
-            "field": "Company",
-            "headerName": "COMPANY",
-            "cellRenderer": "CompanyLinkCell",
-            "minWidth": 200,
-            "flex": 1,
-            "headerClass": "h-left",
-            "cellClass": "c-left",
-        },
-        {
-            "colId": "dirr",
             "field": "DirR",
             "headerName": "MOMENTUM",
             "type": "rightAligned",
-            "cellRenderer": "Num2Cell",
-            "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
             "minWidth": 110,
-            "maxWidth": 130,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
+            "flex": 1,
+            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) : ''"},
+            "cellClassRules": {
+                "cell-pos": "params.value > 0",
+                "cell-neg": "params.value < 0"
+            }
         },
+
         {
-            "colId": "price",
             "field": "Price",
             "headerName": "PRICE",
             "type": "rightAligned",
-            "cellRenderer": "Num2Cell",
             "minWidth": 110,
-            "maxWidth": 130,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
+            "flex": 1,
+            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) : ''"},
         },
+
         {
-            "colId": "pct",
             "field": "%Change",
             "headerName": "%CHG",
             "type": "rightAligned",
-            "cellRenderer": "Pct2Cell",
-            "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
-            "minWidth": 105,
-            "maxWidth": 125,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
+            "minWidth": 100,
+            "flex": 1,
+            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) + '%' : ''"},
+            "cellClassRules": {
+                "cell-pos": "params.value > 0",
+                "cell-neg": "params.value < 0"
+            }
         },
+
         {
-            "colId": "gap",
             "field": "Gap%",
             "headerName": "GAP %",
             "type": "rightAligned",
-            "cellRenderer": "Pct2Cell",
-            "minWidth": 105,
-            "maxWidth": 125,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
+            "minWidth": 100,
+            "flex": 1,
+            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) + '%' : ''"},
         },
+
         {
-            "colId": "rvolm",
             "field": "RVOLm",
             "headerName": "RVOLm",
             "type": "rightAligned",
-            "cellRenderer": "Num2Cell",
-            "minWidth": 110,
-            "maxWidth": 130,
-            "headerClass": "ag-right-aligned-header h-right",
-            "cellClass": "ag-right-aligned-cell cell-num c-right",
+            "minWidth": 100,
+            "flex": 1,
+            "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) : ''"},
         },
     ]
-
 
 def sector_modal_component():
 
@@ -1272,8 +1249,22 @@ def sector_modal_component():
         "animateRows": True,
         "alwaysShowVerticalScroll": True,
         "domLayout": "normal",
-        "onGridReady": {"function": "params.api.sizeColumnsToFit();"},
-        "onGridSizeChanged": {"function": "params.api.sizeColumnsToFit();"},
+
+        # ✅ Render-safe column resize fix
+        "onGridReady": {
+            "function": """
+                setTimeout(() => {
+                    params.api.sizeColumnsToFit();
+                }, 120);
+            """
+        },
+        "onGridSizeChanged": {
+            "function": """
+                setTimeout(() => {
+                    params.api.sizeColumnsToFit();
+                }, 120);
+            """
+        },
     }
 
     header = html.Div(
@@ -1289,7 +1280,7 @@ def sector_modal_component():
                     color="secondary",
                     outline=True,
                     size="sm",
-                    className="tt-modal-close-btn",   # ✅ Added class
+                    className="tt-modal-close-btn",
                 ),
                 href=BASE,
                 refresh=False,
