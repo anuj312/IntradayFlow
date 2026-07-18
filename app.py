@@ -293,7 +293,7 @@ def health():
 
 @app.get("/favicon.ico")
 def favicon():
-    return JSONResponse({}, status_code=204)
+    return Response(status_code=204)
 
 
 # =============================================================================
