@@ -173,7 +173,7 @@ hr { border-color: rgba(255,255,255,0.06) !important; opacity: 1; }
 }
 
 /* ==========================================================================
-   TACTICAL BEACON COMAPLICATION (RED OFFLINE / GREEN ONLINE)
+   TACTICAL BEACON COMPLICATION (RED OFFLINE / GREEN ONLINE)
 ========================================================================== */
 .status-beacon {
   display: inline-flex;
@@ -211,15 +211,27 @@ hr { border-color: rgba(255,255,255,0.06) !important; opacity: 1; }
   animation: statusPulse 1.8s cubic-bezier(0.24, 0, 0.38, 1) infinite;
 }
 
-/* ACTIVE ONLINE BEACON (Fully Integrated Green State) */
-.status-beacon.online {
-  border: 1px solid rgba(0, 230, 118, 0.35);
-  background: linear-gradient(180deg, rgba(0, 230, 118, 0.08) 0%, rgba(0, 230, 118, 0.02) 100%);
-  color: var(--good);
-  text-shadow: 0 0 10px rgba(0, 230, 118, 0.35);
+/* ACTIVE ONLINE STATE (Green Neon Engine Overrides) */
+.online,
+.status-online,
+.status-beacon.online,
+.top-tab.online {
+  border: 1px solid rgba(0, 230, 118, 0.35) !important;
+  background: linear-gradient(180deg, rgba(0, 230, 118, 0.08) 0%, rgba(0, 230, 118, 0.02) 100%) !important;
+  color: var(--good) !important;
+  text-shadow: 0 0 10px rgba(0, 230, 118, 0.35) !important;
   box-shadow: 
     0 4px 15px rgba(0, 230, 118, 0.15),
-    inset 0 1px 0 rgba(0, 230, 118, 0.08);
+    inset 0 1px 0 rgba(0, 230, 118, 0.08) !important;
+}
+
+.online:hover,
+.status-online:hover,
+.top-tab.online:hover {
+  border-color: rgba(0, 230, 118, 0.55) !important;
+  box-shadow: 
+    0 8px 25px rgba(0, 230, 118, 0.25),
+    inset 0 1px 0 rgba(0, 230, 118, 0.15) !important;
 }
 
 .status-beacon.online .status-dot {
@@ -233,15 +245,27 @@ hr { border-color: rgba(255,255,255,0.06) !important; opacity: 1; }
   background-color: var(--good);
 }
 
-/* ALERT OFFLINE BEACON (Fully Integrated Red State) */
-.status-beacon.offline {
-  border: 1px solid rgba(255, 61, 87, 0.35);
-  background: linear-gradient(180deg, rgba(255, 61, 87, 0.08) 0%, rgba(255, 61, 87, 0.02) 100%);
-  color: var(--bad);
-  text-shadow: 0 0 10px rgba(255, 61, 87, 0.35);
+/* ALERT OFFLINE STATE (Red Neon Engine Overrides) */
+.offline,
+.status-offline,
+.status-beacon.offline,
+.top-tab.offline {
+  border: 1px solid rgba(255, 61, 87, 0.35) !important;
+  background: linear-gradient(180deg, rgba(255, 61, 87, 0.08) 0%, rgba(255, 61, 87, 0.02) 100%) !important;
+  color: var(--bad) !important;
+  text-shadow: 0 0 10px rgba(255, 61, 87, 0.35) !important;
   box-shadow: 
     0 4px 15px rgba(255, 61, 87, 0.15),
-    inset 0 1px 0 rgba(255, 61, 87, 0.08);
+    inset 0 1px 0 rgba(255, 61, 87, 0.08) !important;
+}
+
+.offline:hover,
+.status-offline:hover,
+.top-tab.offline:hover {
+  border-color: rgba(255, 61, 87, 0.55) !important;
+  box-shadow: 
+    0 8px 25px rgba(255, 61, 87, 0.25),
+    inset 0 1px 0 rgba(255, 61, 87, 0.15) !important;
 }
 
 .status-beacon.offline .status-dot {
@@ -253,7 +277,7 @@ hr { border-color: rgba(255,255,255,0.06) !important; opacity: 1; }
 
 .status-beacon.offline .status-dot::after {
   background-color: var(--bad);
-  animation-duration: 1.1s; /* Accelerated warning frequency pulse */
+  animation-duration: 1.1s; /* Accelerated pulse warning */
 }
 
 @keyframes statusPulse {
@@ -3329,12 +3353,12 @@ td:first-child { text-align: left; }
 
 /* Green / Red for sign-based cells */
 .ag-theme-alpine-dark .ag-cell.cell-pos {
-  color: var(--good) !important;
+  color: #2ed573 !important;
   font-weight: 800 !important;
 }
 
 .ag-theme-alpine-dark .ag-cell.cell-neg {
-  color: var(--bad) !important;
+  color: #ff4757 !important;
   font-weight: 800 !important;
 }
 
@@ -3492,4 +3516,23 @@ td:first-child { text-align: left; }
 .cell-neg {
   color: #ff4757 !important;
   font-weight: 600;
+}
+
+/* ===== Live/Offline badge colors (override stat-badge base) ===== */
+.stat-badge.badge.bg-success {
+  background: rgba(0, 230, 118, 0.12) !important;
+  border-color: rgba(0, 230, 118, 0.45) !important;
+  color: var(--good) !important;
+  text-shadow: 0 0 10px rgba(0, 230, 118, 0.25) !important;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.35),
+              0 0 18px rgba(0, 230, 118, 0.14) !important;
+}
+
+.stat-badge.badge.bg-danger {
+  background: rgba(255, 61, 87, 0.12) !important;
+  border-color: rgba(255, 61, 87, 0.45) !important;
+  color: var(--bad) !important;
+  text-shadow: 0 0 10px rgba(255, 61, 87, 0.25) !important;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.35),
+              0 0 18px rgba(255, 61, 87, 0.14) !important;
 }
