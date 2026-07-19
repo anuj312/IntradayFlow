@@ -85,6 +85,16 @@ COMPUTE_SLEEP_SEC = float(os.getenv("COMPUTE_SLEEP_SEC", "0.20"))
 
 SECTOR_PLOT_H_PX = int(os.getenv("SECTOR_PLOT_H_PX", "350"))
 
+import json
+
+PACE_CURVE_READY = False
+PACE_CUM_FRAC_MIN: List[float] = []  # len=375 cumulative fraction per minute
+PACE_BUILD_STARTED = False
+PACE_LOCK = threading.Lock()
+
+# use /tmp on Render (safe, but ephemeral)
+PACE_CACHE_PATH = Path("/tmp/pace_curve_cache.json")
+
 # =============================================================================
 # KITE INIT
 # =============================================================================
@@ -252,6 +262,46 @@ DAILY_SEED_PROGRESS = {"done": 0, "total": len(TOKENS)}
 DAILY_SEED_ERRORS = 0
 
 
+# =============================================================================
+# U-SHAPED PACING CURVE (optional upgrade from linear pacing)
+# =============================================================================
+U_CURVE_READY = False
+U_CUM_FRAC: List[float] = []   # cumulative expected volume fraction per minute (len=375)
+
+
+def _build_u_shaped_cum_curve(total_mins: int = 375, a: float = 0.65, b: float = 0.65) -> List[float]:
+    """
+    Smooth U-shaped expected intraday volume curve.
+    Uses a Beta-like shape: w(x) ∝ x^(a-1) * (1-x)^(b-1)
+    For a=b<1 => U-shape (more vol near open/close, less mid-day).
+    Returns cumulative fractions, last = 1.0
+    """
+    weights: List[float] = []
+    for i in range(total_mins):
+        x = (i + 0.5) / total_mins  # (0,1)
+        w = (x ** (a - 1.0)) * ((1.0 - x) ** (b - 1.0))
+        weights.append(float(w))
+
+    s = sum(weights) + 1e-12
+    cum: List[float] = []
+    run = 0.0
+    for w in weights:
+        run += w
+        cum.append(run / s)
+
+    cum[-1] = 1.0
+    return cum
+
+
+def init_u_curve_once():
+    global U_CURVE_READY, U_CUM_FRAC
+    if U_CURVE_READY:
+        return
+    # Tune a/b: 0.85 mild U-shape, 0.65 strong U-shape
+    U_CUM_FRAC = _build_u_shaped_cum_curve(total_mins=375, a=0.65, b=0.65)
+    U_CURVE_READY = True
+
+
 def market_is_open_ist(now: Optional[datetime] = None) -> bool:
     now = now or datetime.now(IST)
     if now.weekday() >= 5:
@@ -316,6 +366,169 @@ def update_from_tick(tick: dict):
 
     _hot_history_push(token, time.time(), float(ltp), float(cumvol) if cumvol is not None else None)
     return ts
+
+def _pace_reference_tokens_all_sectors(max_per_sector: int = 2, max_total: int = 30) -> List[int]:
+    """
+    Render-safe: pick representative tokens across ALL sectors, capped.
+    This gives a curve that reflects your whole universe without 200+ API calls.
+    """
+    picked_syms: List[str] = []
+
+    for _sector, syms in SECTOR_DEFINITIONS.items():
+        cands = [s for s in syms if s in symbol_to_token]
+        if not cands:
+            continue
+        picked_syms.extend(cands[:max_per_sector])
+
+    out: List[int] = []
+    seen = set()
+    for s in picked_syms:
+        tok = symbol_to_token.get(s)
+        if not tok or tok in seen:
+            continue
+        out.append(tok)
+        seen.add(tok)
+        if len(out) >= max_total:
+            break
+
+    return out if out else TOKENS[:5]
+
+
+def _build_learned_pace_curve_from_history(days_back: int = 30) -> List[float]:
+    """
+    Build a 375-minute cumulative expected volume fraction curve from real 5-min candles.
+    Output: list length 375, last value = 1.0
+    """
+    total_mins = 375
+    bins_5m = total_mins // 5  # 75
+
+    toks = _pace_reference_tokens_all_sectors(max_per_sector=2, max_total=20)
+
+    vol_sum = [0.0] * bins_5m
+    vol_n = 0
+
+    to_dt = datetime.now(IST)
+    from_dt = to_dt - timedelta(days=days_back)
+    today = datetime.now(IST).date()
+
+    for tok in toks:
+        candles = kite.historical_data(
+            instrument_token=tok,
+            from_date=from_dt,
+            to_date=to_dt,
+            interval="5minute",
+            continuous=False,
+            oi=False,
+        )
+        df = pd.DataFrame(candles)
+        if df.empty:
+            time.sleep(0.35)
+            continue
+
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+
+        for d, g in df.groupby(df.index.date):
+            # skip today's partial session if market is open
+            if market_is_open_ist() and d == today:
+                continue
+
+            g = g.sort_index()
+            if len(g) < 50:
+                continue
+
+            vols = g["volume"].astype(float).tolist()
+            vols = vols[:bins_5m] + [0.0] * max(0, bins_5m - len(vols))
+
+            for i in range(bins_5m):
+                vol_sum[i] += float(vols[i])
+            vol_n += 1
+
+        time.sleep(0.35)  # throttle to avoid rate limits
+
+    if vol_n <= 3:
+        raise RuntimeError("Not enough intraday history to build learned pacing curve")
+
+    vol_avg = [v / vol_n for v in vol_sum]
+    total = sum(vol_avg) + 1e-12
+    weights_5m = [v / total for v in vol_avg]  # sums to 1
+
+    # Expand 5-min weights into 1-min weights (repeat each bin across 5 minutes)
+    w_min: List[float] = []
+    for w in weights_5m:
+        w_min.extend([w / 5.0] * 5)
+
+    # Cumulative fraction per minute
+    cum: List[float] = []
+    run = 0.0
+    for w in w_min:
+        run += w
+        cum.append(run)
+
+    cum[-1] = 1.0
+    return cum
+
+def _load_pace_cache_today() -> Optional[List[float]]:
+    try:
+        if not PACE_CACHE_PATH.exists():
+            return None
+        data = json.loads(PACE_CACHE_PATH.read_text(encoding="utf-8"))
+        if data.get("date") != str(datetime.now(IST).date()):
+            return None
+        curve = data.get("curve")
+        if not isinstance(curve, list) or len(curve) != 375:
+            return None
+        return [float(x) for x in curve]
+    except Exception:
+        return None
+
+
+def _save_pace_cache_today(curve: List[float]):
+    try:
+        PACE_CACHE_PATH.write_text(
+            json.dumps({"date": str(datetime.now(IST).date()), "curve": curve}),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+
+def start_pace_curve_builder_once():
+    """
+    Render-safe: build in background so startup stays fast.
+    Sets PACE_CURVE_READY and PACE_CUM_FRAC_MIN when finished.
+    """
+    global PACE_BUILD_STARTED, PACE_CURVE_READY, PACE_CUM_FRAC_MIN
+
+    if PACE_BUILD_STARTED:
+        return
+    PACE_BUILD_STARTED = True
+
+    def _run():
+        global PACE_CURVE_READY, PACE_CUM_FRAC_MIN
+
+        # 1) try cache
+        cached = _load_pace_cache_today()
+        if cached:
+            with PACE_LOCK:
+                PACE_CUM_FRAC_MIN = cached
+                PACE_CURVE_READY = True
+            log.info("PACE curve loaded from cache (%s)", str(PACE_CACHE_PATH))
+            return
+
+        # 2) build from history
+        try:
+            curve = _build_learned_pace_curve_from_history(days_back=30)
+            with PACE_LOCK:
+                PACE_CUM_FRAC_MIN = curve
+                PACE_CURVE_READY = True
+            _save_pace_cache_today(curve)
+            log.info("PACE curve built from intraday history (len=%s)", len(curve))
+        except Exception as e:
+            log.warning("PACE curve build failed -> using fallback pacing. err=%r", e)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def compute_20d_daily_stats_and_eod(token: int, days_back: int = 220) -> Dict[str, Any]:
@@ -603,20 +816,45 @@ def _get_live_or_eod_state_from_snap(token: int, snap: Dict[str, Any]) -> Option
 
 
 def _time_factor_ist_for_rvol(now_ist: Optional[datetime] = None) -> float:
+    """
+    Returns expected *cumulative* volume fraction for the current time in IST.
+
+    Priority:
+      1) Learned curve (PACE_CUM_FRAC_MIN) if ready
+      2) U-shaped fallback curve (U_CUM_FRAC) if ready
+      3) Linear fallback (mins_passed / 375)
+
+    Output is clamped to [0.01, 1.0]
+    """
     now_ist = now_ist or datetime.now(IST)
+
     m_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
     m_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
 
-    total_mins = 375.0
-    if now_ist < m_open:
-        mins_passed = 1.0
-    elif now_ist > m_close:
+    total_mins = 375  # 9:15 -> 15:30
+
+    # minutes passed into session (1..375)
+    if now_ist <= m_open:
+        mins_passed = 1
+    elif now_ist >= m_close:
         mins_passed = total_mins
     else:
-        mins_passed = max(1.0, (now_ist - m_open).total_seconds() / 60.0)
+        mins_passed = int((now_ist - m_open).total_seconds() // 60)
+        mins_passed = max(1, min(total_mins, mins_passed))
 
-    tf = mins_passed / total_mins
-    return max(0.01, min(1.0, tf))
+    idx = mins_passed - 1
+
+    # Prefer learned curve; fallback to U-curve; else linear
+    with PACE_LOCK:
+        if PACE_CURVE_READY and len(PACE_CUM_FRAC_MIN) == total_mins:
+            tf = float(PACE_CUM_FRAC_MIN[idx])
+        elif U_CURVE_READY and len(U_CUM_FRAC) == total_mins:
+            tf = float(U_CUM_FRAC[idx])
+        else:
+            tf = mins_passed / float(total_mins)
+
+    return max(0.01, min(1.0, float(tf)))
+
 
 
 def _compute_rfactor_row_snap(token: int, snap: Dict[str, Any]) -> Optional[Dict[str, float]]:
@@ -2213,6 +2451,9 @@ def update_market_heatmap(_):
 # STARTUP/SHUTDOWN FOR WRAPPER
 # =============================================================================
 async def _startup():
+    init_u_curve_once()              # fast fallback (ok)
+    start_pace_curve_builder_once()  # ✅ IMPORTANT (learned curve in background)
+
     seed_daily_stats_once(per_req_sleep=SEED_SLEEP_SEC)
     start_ticker_once()
     load_nfo_instruments_once()
