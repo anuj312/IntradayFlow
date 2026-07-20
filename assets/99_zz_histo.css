@@ -1,0 +1,207 @@
+/* ==========================================================================
+   99_zz_histo.css — Sector Histogram
+   MOBILE: true 0-line split + no scroll + fixed label space (no zig-zag)
+   DESKTOP: keep existing behavior
+   Must load AFTER zz_mobile.css
+========================================================================== */
+
+/* Hide injected axis/zero-line blocks (we draw 0-line inside track on mobile) */
+#sector-bars .sector-hist-axis,
+#sector-bars .sector-hist-zero-line{
+  display: none !important;
+}
+
+/* Base flex strip */
+#sector-bars .sector-hist-plot{
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: flex-end !important;
+  width: 100% !important;
+}
+
+#sector-bars .sector-hist-link{
+  text-decoration: none !important;
+  color: inherit !important;
+  display: flex !important;
+  justify-content: center !important;
+}
+
+#sector-bars .sector-hist-track{
+  position: relative !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+#sector-bars .sector-hist-bar{
+  position: absolute !important;
+  left: 12% !important;
+  right: 12% !important;
+  border-radius: 14px !important;
+  overflow: hidden !important;
+}
+
+/* --------------------------------------------------------------------------
+   DESKTOP (>=769): keep your dynamic split (uses inline --zero from Python)
+-------------------------------------------------------------------------- */
+@media (min-width: 769px){
+  #sector-bars .sector-hist-plot{
+    overflow-x: hidden !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+  }
+
+  #sector-bars .sector-hist-link{
+    flex: 1 1 0 !important;
+    min-width: 72px !important;
+  }
+
+  #sector-bars .sector-hist-col{
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+  }
+
+  #sector-bars .sector-hist-bar.pos{
+    top: auto !important;
+    bottom: calc(100% - var(--zero, 50%)) !important;
+    transform: none !important;
+  }
+
+  #sector-bars .sector-hist-bar.neg{
+    bottom: auto !important;
+    top: var(--zero, 50%) !important;
+    transform: none !important;
+  }
+
+  #sector-bars .sector-hist-name{
+    font-size: 12px !important;
+    letter-spacing: 0.10em !important;
+    opacity: 0.70 !important;
+    white-space: nowrap !important;
+    text-transform: uppercase !important;
+    font-weight: 900 !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   MOBILE (<=768): TRUE 0-LINE SPLIT + NO SCROLL + NO ZIGZAG
+   Key: fixed label space so track baseline aligns across all sectors.
+-------------------------------------------------------------------------- */
+@media (max-width: 768px){
+
+  /* Tunables for mobile */
+  #sector-bars .sector-hist-plot{
+    --mobTrackH: 200px;     /* visible plot height */
+    --mobLabelH: 96px;      /* fixed label area (prevents zig-zag) */
+    --mobScale:  0.57;      /* 200/350 (because server computes bars for 350px) */
+
+    overflow-x: hidden !important;              /* override zz_mobile.css */
+    justify-content: space-between !important;
+    gap: 2px !important;
+  }
+
+  /* Critical: allow shrink (override zz_mobile.css min-width:64px) */
+  #sector-bars .sector-hist-link,
+  #sector-bars .sector-hist-col{
+    min-width: 0 !important;
+  }
+
+  #sector-bars .sector-hist-link{
+    flex: 1 1 0 !important;
+    width: auto !important;
+  }
+
+  /* FIX: fixed total column height so every track sits on same baseline */
+  #sector-bars .sector-hist-col{
+    height: calc(var(--mobTrackH) + var(--mobLabelH)) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: flex-start !important; /* track always starts at same Y */
+  }
+
+  /* Fixed track height (also overrides inline height from Python) */
+  #sector-bars .sector-hist-track{
+    height: var(--mobTrackH) !important;
+    width: clamp(12px, 4.4vw, 22px) !important;
+    margin: 0 !important;
+    flex: 0 0 var(--mobTrackH) !important;
+  }
+
+  /* Draw the 0-line using real --zero from your callback */
+  #sector-bars .sector-hist-track::after{
+    content:"";
+    position: absolute;
+    left: 0; right: 0;
+    top: var(--zero, 50%);
+    height: 1px;
+    background: rgba(255,255,255,0.20);
+    opacity: 0.75;
+    pointer-events: none;
+  }
+
+  /* TRUE split around 0-line (and kill any old bottom:50% rules) */
+  #sector-bars .sector-hist-bar.pos{
+    top: auto !important;
+    bottom: calc(100% - var(--zero, 50%)) !important;
+    transform-origin: 50% 100% !important;
+    transform: scaleY(var(--mobScale)) !important;
+  }
+
+  #sector-bars .sector-hist-bar.neg{
+    bottom: auto !important;
+    top: var(--zero, 50%) !important;
+    transform-origin: 50% 0% !important;
+    transform: scaleY(var(--mobScale)) !important;
+  }
+
+  /* Fixed label area (prevents zig-zag) */
+  #sector-bars .sector-hist-name{
+    height: var(--mobLabelH) !important;
+    flex: 0 0 var(--mobLabelH) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    margin: 0 !important;
+    padding-top: 6px !important;
+
+    font-size: 10px !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.10em !important;
+    opacity: 0.62 !important;
+
+    white-space: nowrap !important;
+    text-transform: uppercase !important;
+
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+
+    overflow: hidden !important;          /* long names won’t push layout */
+    text-overflow: ellipsis !important;
+  }
+
+  /* Tooltips off on touch */
+  #sector-bars .sector-hist-tooltip{ display: none !important; }
+}
+
+/* Extra-small phones */
+@media (max-width: 420px){
+  #sector-bars .sector-hist-plot{
+    --mobTrackH: 175px;
+    --mobLabelH: 88px;
+    --mobScale:  0.50; /* 175/350 */
+  }
+
+  #sector-bars .sector-hist-track{
+    width: clamp(11px, 4.0vw, 18px) !important;
+  }
+
+  #sector-bars .sector-hist-name{
+    font-size: 9px !important;
+  }
+}

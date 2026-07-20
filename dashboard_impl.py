@@ -1421,7 +1421,7 @@ def _extract_sector_from_path(pn: str) -> Optional[str]:
     return sector or None
 
 
-def _sector_modal_coldefs():
+def _sector_modal_coldefs_desktop():
     return [
         {
             "field": "Symbol",
@@ -1444,10 +1444,7 @@ def _sector_modal_coldefs():
             "flex": 1,
             "type": "rightAligned",
             "cellRenderer": "Num2Cell",
-            "cellClassRules": {
-                "cell-pos": "params.value > 0",
-                "cell-neg": "params.value < 0",
-            },
+            "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
         },
         {
             "field": "Price",
@@ -1464,10 +1461,7 @@ def _sector_modal_coldefs():
             "flex": 1,
             "type": "rightAligned",
             "cellRenderer": "Pct2Cell",
-            "cellClassRules": {
-                "cell-pos": "params.value > 0",
-                "cell-neg": "params.value < 0",
-            },
+            "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
         },
         {
             "field": "Gap%",
@@ -1487,38 +1481,78 @@ def _sector_modal_coldefs():
         },
     ]
 
-def sector_modal_component():
 
-    grid_opts = {
+def _sector_modal_coldefs_mobile():
+    # Mobile: remove Company + Gap% (too wide), shorten headers
+    return [
+        {
+            "field": "Symbol",
+            "headerName": "STOCK",
+            "minWidth": 92,
+            "flex": 2,
+            "cellRenderer": "SymbolCell",
+        },
+        {
+            "field": "DirR",
+            "headerName": "MOMENTUM",
+            "minWidth": 88,
+            "flex": 1,
+            "type": "rightAligned",
+            "cellRenderer": "Num2Cell",
+            "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
+        },
+        
+        {
+            "field": "Price",
+            "headerName": "Price",
+            "minWidth": 72,
+            "flex": 1,
+            "type": "rightAligned",
+            "cellRenderer": "Num2Cell",
+        },
+        {
+            "field": "%Change",
+            "headerName": "%CHG",
+            "minWidth": 72,
+            "flex": 1,
+            "type": "rightAligned",
+            "cellRenderer": "Pct2Cell",
+            "cellClassRules": {"cell-pos": "params.value > 0", "cell-neg": "params.value < 0"},
+        },
+        {
+            "field": "RVOLm",
+            "headerName": "RVOLm",
+            "minWidth": 76,
+            "flex": 1,
+            "type": "rightAligned",
+            "cellRenderer": "Num2Cell",
+        },
+        
+    ]
+
+
+def sector_modal_component():
+    grid_opts_desktop = {
         "getRowId": {"function": "params.data.Symbol"},
         "animateRows": True,
         "alwaysShowVerticalScroll": True,
         "domLayout": "normal",
+        "onGridReady": {"function": "setTimeout(() => params.api.sizeColumnsToFit(), 120);"},
+        "onGridSizeChanged": {"function": "setTimeout(() => params.api.sizeColumnsToFit(), 120);"},
+    }
 
-        # ✅ Render-safe column resize fix
-        "onGridReady": {
-            "function": """
-                setTimeout(() => {
-                    params.api.sizeColumnsToFit();
-                }, 120);
-            """
-        },
-        "onGridSizeChanged": {
-            "function": """
-                setTimeout(() => {
-                    params.api.sizeColumnsToFit();
-                }, 120);
-            """
-        },
+    grid_opts_mobile = {
+        "getRowId": {"function": "params.data.Symbol"},
+        "animateRows": True,
+        "alwaysShowVerticalScroll": False,
+        "domLayout": "normal",
+        "onGridReady": {"function": "setTimeout(() => params.api.sizeColumnsToFit(), 80);"},
+        "onGridSizeChanged": {"function": "setTimeout(() => params.api.sizeColumnsToFit(), 80);"},
     }
 
     header = html.Div(
         [
-            html.Div(
-                id="sector-modal-title",
-                className="tt-modal-title",
-                children="SECTOR",
-            ),
+            html.Div(id="sector-modal-title", className="tt-modal-title", children="SECTOR"),
             dcc.Link(
                 dbc.Button(
                     "Close",
@@ -1539,23 +1573,47 @@ def sector_modal_component():
             dbc.ModalHeader(header, close_button=False),
 
             dbc.ModalBody(
-                dag.AgGrid(
-                    id="sector-modal-grid",
-                    className="ag-theme-alpine-dark tt-modal-grid",
-                    columnDefs=_sector_modal_coldefs(),
-                    rowData=[],
-                    defaultColDef={
-                        "sortable": True,
-                        "filter": True,
-                        "resizable": True,
-                        "flex": 1,
-                    },
-                    dashGridOptions=grid_opts,
-                    style={
-                        "height": "65vh",
-                        "width": "100%",
-                    },
-                ),
+                html.Div(
+                    [
+                        # DESKTOP GRID
+                        html.Div(
+                            dag.AgGrid(
+                                id="sector-modal-grid",
+                                className="ag-theme-alpine-dark tt-modal-grid",
+                                columnDefs=_sector_modal_coldefs_desktop(),
+                                rowData=[],
+                                defaultColDef={
+                                    "sortable": True,
+                                    "filter": True,
+                                    "resizable": True,
+                                    "flex": 1,
+                                },
+                                dashGridOptions=grid_opts_desktop,
+                                style={"height": "65vh", "width": "100%"},
+                            ),
+                            className="desktop-only",
+                        ),
+
+                        # MOBILE GRID
+                        html.Div(
+                            dag.AgGrid(
+                                id="sector-modal-grid-m",
+                                className="ag-theme-alpine-dark tt-modal-grid",
+                                columnDefs=_sector_modal_coldefs_mobile(),
+                                rowData=[],
+                                defaultColDef={
+                                    "sortable": True,
+                                    "filter": False,   # optional: faster on mobile
+                                    "resizable": True,
+                                    "flex": 1,
+                                },
+                                dashGridOptions=grid_opts_mobile,
+                                style={"height": "72vh", "width": "100%"},
+                            ),
+                            className="mobile-only",
+                        ),
+                    ]
+                )
             ),
         ],
         id="sector-modal",
@@ -1571,16 +1629,16 @@ def sector_modal_component():
 # PAGES
 # =============================================================================
 def sectors_page():
-
     # -----------------------------------------
-    # TOP 15 COLUMN DEFINITIONS (Stable)
+    # TOP 15 COLUMN DEFINITIONS
     # -----------------------------------------
-    top15_cols = [
+    top15_cols_desktop = [
         {
             "field": "Symbol",
             "headerName": "STOCK",
             "cellRenderer": "SymbolCell",
             "minWidth": 140,
+            "flex": 2,
             "headerClass": "h-left",
             "cellClass": "c-left",
         },
@@ -1589,6 +1647,7 @@ def sectors_page():
             "headerName": "%CHG",
             "cellRenderer": "PctPill",
             "minWidth": 110,
+            "flex": 1,
             "headerClass": "ag-right-aligned-header",
             "cellClass": "ag-right-aligned-cell",
         },
@@ -1597,6 +1656,7 @@ def sectors_page():
             "headerName": "MOMENTUM",
             "cellRenderer": "RfactorPill",
             "minWidth": 110,
+            "flex": 1,
             "headerClass": "ag-right-aligned-header",
             "cellClass": "ag-right-aligned-cell",
         },
@@ -1605,12 +1665,55 @@ def sectors_page():
             "headerName": "VOLUME",
             "cellRenderer": "VolPill",
             "minWidth": 120,
+            "flex": 1,
             "headerClass": "ag-right-aligned-header",
             "cellClass": "ag-right-aligned-cell",
         },
     ]
 
-    grid_options = {
+    top15_cols_mobile = [
+        {
+            "field": "Symbol",
+            "headerName": "STOCK",
+            "cellRenderer": "SymbolCell",
+            "minWidth": 88,
+            "flex": 2,
+            "headerClass": "h-left",
+            "cellClass": "c-left",
+        },
+        {
+            "field": "%Change",
+            "headerName": "%CHG",
+            "cellRenderer": "PctPill",
+            "minWidth": 70,
+            "flex": 1,
+            "headerClass": "ag-right-aligned-header",
+            "cellClass": "ag-right-aligned-cell",
+        },
+        {
+            "field": "RFactor",
+            "headerName": "MOMENTUM",
+            "cellRenderer": "RfactorPill",
+            "minWidth": 74,
+            "flex": 1,
+            "headerClass": "ag-right-aligned-header",
+            "cellClass": "ag-right-aligned-cell",
+        },
+        {
+            "field": "Vol",
+            "headerName": "VOL",
+            "cellRenderer": "VolPill",
+            "minWidth": 78,
+            "flex": 1,
+            "headerClass": "ag-right-aligned-header",
+            "cellClass": "ag-right-aligned-cell",
+        },
+    ]
+
+    # -----------------------------------------
+    # GRID OPTIONS
+    # -----------------------------------------
+    grid_options_desktop = {
         "getRowId": {"function": "params.data.Symbol"},
         "animateRows": False,
         "rowHeight": 40,
@@ -1618,18 +1721,29 @@ def sectors_page():
         "domLayout": "normal",
     }
 
-    def build_grid(grid_id, height):
+    # Mobile: auto-fit columns on ready/resize
+    grid_options_mobile = {
+        "getRowId": {"function": "params.data.Symbol"},
+        "animateRows": False,
+        "rowHeight": 40,
+        "headerHeight": 38,
+        "domLayout": "normal",
+        "onGridReady": {"function": "setTimeout(() => params.api.sizeColumnsToFit(), 80);"},
+        "onGridSizeChanged": {"function": "setTimeout(() => params.api.sizeColumnsToFit(), 80);"},
+    }
+
+    def build_grid(grid_id: str, height: str, coldefs: list, grid_opts: dict):
         return dag.AgGrid(
             id=grid_id,
             className="ag-theme-alpine-dark grid-wrap",
-            columnDefs=top15_cols,
+            columnDefs=coldefs,
             rowData=[],
             defaultColDef={
                 "sortable": True,
                 "resizable": True,
-                "flex": 1,   # ✅ Desktop expands nicely
+                "flex": 1,
             },
-            dashGridOptions=grid_options,
+            dashGridOptions=grid_opts,
             style={"height": height, "width": "100%"},
         )
 
@@ -1642,10 +1756,7 @@ def sectors_page():
             # -----------------------------------------
             dbc.Row(
                 [
-                    dbc.Col(
-                        html.H4("Sectors", className="page-title mb-0"),
-                        width="auto",
-                    ),
+                    dbc.Col(html.H4("Sectors", className="page-title mb-0"), width="auto"),
                     dbc.Col(
                         dbc.RadioItems(
                             id="sectors-sort",
@@ -1676,14 +1787,24 @@ def sectors_page():
                         dbc.Col(
                             [
                                 html.H6("Top 15 Gainers"),
-                                build_grid("top15-gainers-grid", "350px"),
+                                build_grid(
+                                    "top15-gainers-grid",
+                                    "350px",
+                                    top15_cols_desktop,
+                                    grid_options_desktop,
+                                ),
                             ],
                             md=6,
                         ),
                         dbc.Col(
                             [
                                 html.H6("Top 15 Losers"),
-                                build_grid("top15-losers-grid", "350px"),
+                                build_grid(
+                                    "top15-losers-grid",
+                                    "350px",
+                                    top15_cols_desktop,
+                                    grid_options_desktop,
+                                ),
                             ],
                             md=6,
                         ),
@@ -1702,13 +1823,19 @@ def sectors_page():
                         dbc.Tab(
                             label="Top 15 Gainers",
                             children=build_grid(
-                                "top15-gainers-grid-m", "60vh"
+                                "top15-gainers-grid-m",
+                                "60vh",
+                                top15_cols_mobile,
+                                grid_options_mobile,
                             ),
                         ),
                         dbc.Tab(
                             label="Top 15 Losers",
                             children=build_grid(
-                                "top15-losers-grid-m", "60vh"
+                                "top15-losers-grid-m",
+                                "60vh",
+                                top15_cols_mobile,
+                                grid_options_mobile,
                             ),
                         ),
                     ],
@@ -2310,6 +2437,7 @@ def sector_rows_sorted(sector: str, sort_by: str = "RFactor"):
     Output("sector-modal", "is_open"),
     Output("sector-modal-title", "children"),
     Output("sector-modal-grid", "rowData"),
+    Output("sector-modal-grid-m", "rowData"),   # <-- add this
     Input("url", "pathname"),
     Input("top_refresh", "n_intervals"),
 )
@@ -2318,8 +2446,8 @@ def sync_sector_modal(pathname, _tick):
     if sector and sector in SECTOR_DEFINITIONS:
         rows = sector_rows_sorted(sector, sort_by="RFactor")
         title = sector.replace("_", " ").title()
-        return True, title, rows
-    return False, "Sector", []
+        return True, title, rows, rows
+    return False, "Sector", [], []
 
 
 # =============================================================================
