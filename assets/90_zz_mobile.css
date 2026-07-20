@@ -433,6 +433,31 @@
 .sector-hist-zero-line {
   display: none !important;
 }
+/* ======================================================
+   Top15 mobile: remove vertical separator lines between columns
+   (keep spacing using padding only)
+====================================================== */
+#top15-gainers-grid-m .ag-header-cell,
+#top15-losers-grid-m  .ag-header-cell,
+#top15-gainers-grid-m .ag-cell,
+#top15-losers-grid-m  .ag-cell{
+  border-right: none !important;
+}
+
+/* AG Grid sometimes draws header separators using ::after */
+#top15-gainers-grid-m .ag-header-cell::after,
+#top15-losers-grid-m  .ag-header-cell::after{
+  display: none !important;
+}
+
+/* If you previously added a separator for the MOMENTUM column, kill it */
+#top15-gainers-grid-m .ag-header-cell[col-id="RFactor"],
+#top15-losers-grid-m  .ag-header-cell[col-id="RFactor"],
+#top15-gainers-grid-m .ag-cell[col-id="RFactor"],
+#top15-losers-grid-m  .ag-cell[col-id="RFactor"]{
+  border-left: none !important;     /* removes the line */
+  padding-left: 18px !important;    /* keeps the gap/breathing room */
+}
 
 }
 
