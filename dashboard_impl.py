@@ -84,7 +84,7 @@ COMPUTE_HOT_EVERY_SEC = float(os.getenv("COMPUTE_HOT_EVERY_SEC", "5.0"))
 COMPUTE_PCR_EVERY_SEC = float(os.getenv("COMPUTE_PCR_EVERY_SEC", "5.0"))
 COMPUTE_SLEEP_SEC = float(os.getenv("COMPUTE_SLEEP_SEC", "0.20"))
 
-SECTOR_PLOT_H_PX = int(os.getenv("SECTOR_PLOT_H_PX", "400"))
+SECTOR_PLOT_H_PX = int(os.getenv("SECTOR_PLOT_H_PX", "360"))
 
 # Pacing curve
 PACE_CURVE_READY = False
