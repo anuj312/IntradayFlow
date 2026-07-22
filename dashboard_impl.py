@@ -1928,19 +1928,43 @@ def sectors_page():
                 [
                     dbc.Col(html.H4("Sectors", className="page-title mb-0"), width="auto"),
                     dbc.Col(
-                        dbc.RadioItems(
-                            id="sectors-sort",
-                            options=[
-                                {"label": "Sort: RVOLm",      "value": "RVOLm"},
-                                {"label": "Sort: RVOLm Mean", "value": "RVOLmMean"},
-                                {"label": "Sort: Momentum",   "value": "DirR"},
-                            ],
-                            value="DirR",
-                            inline=True,
-                            className="ms-2",
-                        ),
-                        width=True,
-                    ),
+    html.Div(
+        [
+            # DESKTOP: keep radio buttons
+            html.Div(
+                dbc.RadioItems(
+                    id="sectors-sort",
+                    options=[
+                        {"label": "Sort: RVOLm",      "value": "RVOLm"},
+                        {"label": "Sort: RVOLm Mean", "value": "RVOLmMean"},
+                        {"label": "Sort: Momentum",   "value": "DirR"},
+                    ],
+                    value="DirR",
+                    inline=True,
+                    className="sectors-sort ms-2",
+                ),
+                className="desktop-only",
+            ),
+
+            # MOBILE: dropdown with all 3
+            html.Div(
+                dbc.Select(
+                    id="sectors-sort-dd",
+                    options=[
+                        {"label": "RVOLm",      "value": "RVOLm"},
+                        {"label": "RVOLm Mean", "value": "RVOLmMean"},
+                        {"label": "Momentum",   "value": "DirR"},
+                    ],
+                    value="DirR",
+                    size="sm",
+                    className="sectors-sort-dd",
+                ),
+                className="mobile-only",
+            ),
+        ]
+    ),
+    width=True,
+),
                 ],
                 className="align-items-center g-2 mb-2",
             ),
@@ -1954,14 +1978,14 @@ def sectors_page():
                     [
                         dbc.Col(
                             [
-                                html.H6("Top 15 Gainers"),
+                                html.H6("Top 15 Gainers", className="tt-top15-title tt-top15-gainers"),
                                 build_grid("top15-gainers-grid", "350px", top15_cols_desktop, grid_options_desktop),
                             ],
                             md=6,
                         ),
                         dbc.Col(
                             [
-                                html.H6("Top 15 Losers"),
+                                html.H6("Top 15 Losers", className="tt-top15-title tt-top15-losers"),
                                 build_grid("top15-losers-grid", "350px", top15_cols_desktop, grid_options_desktop),
                             ],
                             md=6,
@@ -2374,9 +2398,10 @@ def update_top_stats(_):
     Output("sector-bars", "children"),
     Input("refresh_sectors", "n_intervals"),
     Input("sectors-sort", "value"),
+    Input("sectors-sort-dd", "value"),
 )
-def render_sector_bars(_n, sort_by):
-    sort_by = (sort_by or "RVOLm").strip()
+def render_sector_bars(_n, sort_by_radio, sort_by_dd):
+    sort_by = (sort_by_dd or sort_by_radio or "DirR").strip()
 
     try:
         if sort_by == "DirR":

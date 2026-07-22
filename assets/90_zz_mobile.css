@@ -28,6 +28,98 @@
     --transition-premium: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+    /* ======================================================
+     EXTRA: shrink %CHG / MOMENTUM / VOL columns (Top15 Mobile)
+  ====================================================== */
+
+  /* Make these 3 numeric columns smaller than STOCK */
+  #top15-gainers-grid-m .ag-cell[col-id="%Change"],
+  #top15-losers-grid-m  .ag-cell[col-id="%Change"],
+  #top15-gainers-grid-m .ag-cell[col-id="RFactor"],
+  #top15-losers-grid-m  .ag-cell[col-id="RFactor"],
+  #top15-gainers-grid-m .ag-cell[col-id="Vol"],
+  #top15-losers-grid-m  .ag-cell[col-id="Vol"]{
+    font-size: 12px !important;
+    line-height: 1.05 !important;
+  }
+
+  /* Force the pill/renderer content inside those columns too */
+  #top15-gainers-grid-m .ag-cell[col-id="%Change"] *,
+  #top15-losers-grid-m  .ag-cell[col-id="%Change"] *,
+  #top15-gainers-grid-m .ag-cell[col-id="RFactor"] *,
+  #top15-losers-grid-m  .ag-cell[col-id="RFactor"] *,
+  #top15-gainers-grid-m .ag-cell[col-id="Vol"] *,
+  #top15-losers-grid-m  .ag-cell[col-id="Vol"] *{
+    font-size: 12px !important;
+    line-height: 1.05 !important;
+  }
+
+  /* Optional: tighter pill padding so it looks proportional */
+  #top15-gainers-grid-m .ag-cell[col-id="%Change"] .tt-pill,
+  #top15-losers-grid-m  .ag-cell[col-id="%Change"] .tt-pill,
+  #top15-gainers-grid-m .ag-cell[col-id="RFactor"] .tt-pill,
+  #top15-losers-grid-m  .ag-cell[col-id="RFactor"] .tt-pill,
+  #top15-gainers-grid-m .ag-cell[col-id="Vol"] .tt-pill,
+  #top15-losers-grid-m  .ag-cell[col-id="Vol"] .tt-pill{
+    padding: 2px 7px !important;
+  }
+
+    /* ======================================================
+     Sector MODAL grid (mobile): shrink numbers like Top15
+     Affects: Symbol / DirR / Price / %Change / RVOLm
+  ====================================================== */
+
+  /* Base smaller font for all sector modal cells */
+  #sector-modal-grid-m .ag-cell,
+  #sector-modal-grid-m .ag-cell-value{
+    font-size: 12px !important;
+    line-height: 1.05 !important;
+  }
+
+  /* Headers smaller */
+  #sector-modal-grid-m .ag-header-cell-text{
+    font-size: 9px !important;
+    letter-spacing: 0.35px !important;
+  }
+
+  /* Keep STOCK slightly bigger */
+  #sector-modal-grid-m .ag-cell[col-id="Symbol"],
+  #sector-modal-grid-m .ag-cell[col-id="Symbol"] *{
+    font-size: 12px !important;
+    font-weight: 700 !important;
+  }
+
+  /* Make numeric columns smaller */
+  #sector-modal-grid-m .ag-cell[col-id="DirR"],
+  #sector-modal-grid-m .ag-cell[col-id="Price"],
+  #sector-modal-grid-m .ag-cell[col-id="%Change"],
+  #sector-modal-grid-m .ag-cell[col-id="RVOLm"]{
+    font-size: 12px !important;
+    line-height: 1.05 !important;
+  }
+
+  /* Force renderer/pill content inside numeric columns too */
+  #sector-modal-grid-m .ag-cell[col-id="DirR"] *,
+  #sector-modal-grid-m .ag-cell[col-id="Price"] *,
+  #sector-modal-grid-m .ag-cell[col-id="%Change"] *,
+  #sector-modal-grid-m .ag-cell[col-id="RVOLm"] *{
+    font-size: 12px !important;
+    line-height: 1.05 !important;
+  }
+
+  .sectors-sort-dd {
+  width: 100%;
+}
+.sectors-sort-dd.form-select {
+  background: rgba(255,255,255,0.035) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  color: rgba(255,255,255,0.9) !important;
+  border-radius: 14px !important;
+  padding: 10px 12px !important;
+  font-weight: 700 !important;
+  font-size: 12px !important;
+}
+
   /* ======================================================
      GLOBAL LAYOUT & TYPOGRAPHY
   ====================================================== */
@@ -416,48 +508,192 @@
 
   /* ======================================================
    SECTOR HISTOGRAM — MOBILE COMPACT
-====================================================== */
+  ====================================================== */
 
-.sector-hist-plot {
-  gap: 10px !important;
-  padding-bottom: 12px !important;
+  .sector-hist-plot {
+    gap: 10px !important;
+    padding-bottom: 12px !important;
+  }
+
+  /* Make columns comfortable to tap/read */
+  .sector-hist-col {
+    min-width: 64px !important;
+  }
+
+  /* Optional: hide axis + zero-line on small screens to save space */
+  .sector-hist-axis,
+  .sector-hist-zero-line {
+    display: none !important;
+  }
+
+  /* ======================================================
+     Top15 mobile: remove vertical separator lines between columns
+     (keep spacing using padding only)
+  ====================================================== */
+  #top15-gainers-grid-m .ag-header-cell,
+  #top15-losers-grid-m  .ag-header-cell,
+  #top15-gainers-grid-m .ag-cell,
+  #top15-losers-grid-m  .ag-cell{
+    border-right: none !important;
+  }
+
+  /* AG Grid sometimes draws header separators using ::after */
+  #top15-gainers-grid-m .ag-header-cell::after,
+  #top15-losers-grid-m  .ag-header-cell::after{
+    display: none !important;
+  }
+
+  /* If you previously added a separator for the MOMENTUM column, kill it */
+  #top15-gainers-grid-m .ag-header-cell[col-id="RFactor"],
+  #top15-losers-grid-m  .ag-header-cell[col-id="RFactor"],
+  #top15-gainers-grid-m .ag-cell[col-id="RFactor"],
+  #top15-losers-grid-m  .ag-cell[col-id="RFactor"]{
+    border-left: none !important;     /* removes the line */
+    padding-left: 18px !important;    /* keeps the gap/breathing room */
+  }
+
+  /* ======================================================
+     NEW: Top15 Mobile — Reduce value sizes (Stock/%CHG/MOM/VOL)
+  ====================================================== */
+
+  /* Reduce base cell text for Top15 grids only */
+  #top15-gainers-grid-m .ag-cell,
+  #top15-losers-grid-m  .ag-cell{
+    font-size: 11px !important;   /* main reduction */
+    line-height: 1.1 !important;
+  }
+
+  /* Reduce header text slightly */
+  #top15-gainers-grid-m .ag-header-cell-text,
+  #top15-losers-grid-m  .ag-header-cell-text{
+    font-size: 9px !important;
+    letter-spacing: 0.4px !important;
+  }
+
+  /* If your renderers use pill-like spans, shrink them too (important) */
+  #top15-gainers-grid-m .tt-pill,
+  #top15-losers-grid-m  .tt-pill,
+  #top15-gainers-grid-m .pill,
+  #top15-losers-grid-m  .pill{
+    font-size: 10.5px !important;
+    padding: 3px 8px !important;
+  }
+
+  /* Optional: keep STOCK a bit larger than numbers */
+  #top15-gainers-grid-m .ag-cell[col-id="Symbol"],
+  #top15-losers-grid-m  .ag-cell[col-id="Symbol"]{
+    font-size: 12px !important;
+  }
+
 }
 
-/* Make columns comfortable to tap/read */
-.sector-hist-col {
-  min-width: 64px !important;
-}
-
-/* Optional: hide axis + zero-line on small screens to save space */
-.sector-hist-axis,
-.sector-hist-zero-line {
-  display: none !important;
-}
 /* ======================================================
-   Top15 mobile: remove vertical separator lines between columns
-   (keep spacing using padding only)
+   PREMIUM: Top 15 Titles + Tabs
 ====================================================== */
-#top15-gainers-grid-m .ag-header-cell,
-#top15-losers-grid-m  .ag-header-cell,
-#top15-gainers-grid-m .ag-cell,
-#top15-losers-grid-m  .ag-cell{
-  border-right: none !important;
+
+/* Desktop titles */
+.tt-top15-title{
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  margin: 6px 0 10px 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.035);
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow:
+    0 10px 24px rgba(0,0,0,0.45),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(10px);
 }
 
-/* AG Grid sometimes draws header separators using ::after */
-#top15-gainers-grid-m .ag-header-cell::after,
-#top15-losers-grid-m  .ag-header-cell::after{
-  display: none !important;
+.tt-top15-gainers{
+  color: rgba(46, 213, 115, 0.95);
+  border-color: rgba(46, 213, 115, 0.22);
+  box-shadow:
+    0 10px 24px rgba(0,0,0,0.45),
+    0 0 18px rgba(46, 213, 115, 0.12),
+    inset 0 1px 0 rgba(255,255,255,0.08);
 }
 
-/* If you previously added a separator for the MOMENTUM column, kill it */
-#top15-gainers-grid-m .ag-header-cell[col-id="RFactor"],
-#top15-losers-grid-m  .ag-header-cell[col-id="RFactor"],
-#top15-gainers-grid-m .ag-cell[col-id="RFactor"],
-#top15-losers-grid-m  .ag-cell[col-id="RFactor"]{
-  border-left: none !important;     /* removes the line */
-  padding-left: 18px !important;    /* keeps the gap/breathing room */
+.tt-top15-losers{
+  color: rgba(255, 71, 87, 0.95);
+  border-color: rgba(255, 71, 87, 0.22);
+  box-shadow:
+    0 10px 24px rgba(0,0,0,0.45),
+    0 0 18px rgba(255, 71, 87, 0.12),
+    inset 0 1px 0 rgba(255,255,255,0.08);
 }
 
-}
+/* Mobile tabs (Top15) */
+@media screen and (max-width: 768px){
 
+  .top15-tabs{
+    background: rgba(255,255,255,0.025) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    border-radius: 16px !important;
+    padding: 6px !important;
+    box-shadow:
+      0 14px 34px rgba(0,0,0,0.55),
+      inset 0 1px 0 rgba(255,255,255,0.06);
+    backdrop-filter: blur(10px);
+  }
+
+  .top15-tabs .nav-link{
+    position: relative;
+    border-radius: 13px !important;
+    padding: 10px 12px !important;
+    font-size: 12px !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.5px !important;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.65) !important;
+    background: rgba(255,255,255,0.02) !important;
+    border: 1px solid rgba(255,255,255,0.06) !important;
+    transition: 0.18s ease;
+  }
+
+  /* Small indicator dot */
+  .top15-tabs .nav-link::before{
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 99px;
+    background: rgba(255,255,255,0.25);
+    display: inline-block;
+    margin-right: 8px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.10);
+    transform: translateY(-1px);
+  }
+
+  .top15-tabs .nav-item:nth-child(1) .nav-link::before{
+    background: rgba(46, 213, 115, 0.90) !important;  /* green = gainers */
+  }
+  .top15-tabs .nav-item:nth-child(2) .nav-link::before{
+    background: rgba(255, 71, 87, 0.90) !important;   /* red = losers */
+
+  /* Active tab: premium glow */
+  .top15-tabs .nav-link.active{
+    color: rgba(255,255,255,0.96) !important;
+    background: linear-gradient(180deg,
+      rgba(255,255,255,0.08),
+      rgba(255,255,255,0.03)
+    ) !important;
+    border-color: rgba(0,122,255,0.35) !important;
+    box-shadow:
+      0 12px 28px rgba(0,0,0,0.55),
+      0 0 20px rgba(0,122,255,0.20),
+      inset 0 1px 0 rgba(255,255,255,0.10);
+    transform: translateY(-1px);
+  }
+
+  
+
+  
+
+  /* Optional: different dot color per tab (1st = gainers, 2nd = losers) */
+  .top15-tabs .nav-link:nth-child(1)::before{ background: rgba(46,213,115,0.85); }
+  .top15-tabs .nav-link:nth-child(2)::before{ background: rgba(255,71,87,0.85); }
+  }
+}
