@@ -164,10 +164,10 @@ SECTOR_DEFINITIONS = {
         "BRITANNIA", "DABUR", "MARICO",
         "COLPAL", "GODREJCP",
         "TATACONSUM", "PATANJALI",
-        "UNITDSPR",
+        "UNITDSPR", "RADICO"
         "VBL", "DMART", "NYKAA",
         "ETERNAL", "SWIGGY",
-        "TITAN", "TRENT",
+        "TITAN", "TRENT", "VMM",
         "KALYANKJIL", "JUBLFOOD",
         "ASIANPAINT"
     ],
@@ -205,7 +205,7 @@ SECTOR_DEFINITIONS = {
         "BHARTIARTL", "INDUSTOWER",
         "HAVELLS", "KEI", "POLYCAB",
         "CROMPTON", "VOLTAS",
-        "PGEL", "DIXON"
+        "PGEL", "DIXON", "SRF"
     ],
     "LOGISTICS": [
         "CONCOR", "DELHIVERY", "INDIGO",

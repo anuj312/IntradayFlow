@@ -21,12 +21,13 @@ from starlette.middleware.wsgi import WSGIMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 import dashboard_impl as impl
+from fastapi import FastAPI, Request, Response
 
 
 # =============================================================================
 # AUTH CONFIG
 # =============================================================================
-LOGIN_PASS = os.getenv("APP_LOGIN_PASS", "Momentum@123#")
+LOGIN_PASS = os.getenv("APP_LOGIN_PASS", "55")
 
 AUTH_COOKIE_NAME = os.getenv("APP_AUTH_COOKIE", "tt_auth")
 AUTH_TTL_SEC = int(os.getenv("APP_AUTH_TTL_SEC", "43200"))  # 12 hours
@@ -269,6 +270,7 @@ def auth_login(payload: LoginIn):
         secure=COOKIE_SECURE,
         samesite="lax",
         path="/",
+        max_age=AUTH_TTL_SEC, 
     )
     return resp
 
