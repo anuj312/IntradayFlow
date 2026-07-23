@@ -141,12 +141,12 @@
       -webkit-mask-image: radial-gradient(circle at 50% 50%, black, transparent 85%);
     }
 
-    /* Outer Wrapper - Responsive boundaries */
+    /* Outer Wrapper - Expanded Left-To-Right boundaries */
     .wrapper {
       position: relative;
       z-index: 10;
       width: 100%;
-      max-width: 980px; 
+      max-width: 1120px; /* Increased from 980px to stretch beautifully left-to-right */
       padding: clamp(12px, 3vw, 24px);
       margin: auto;
     }
@@ -154,7 +154,7 @@
     /* Split-Panel Card */
     .portal-card {
       display: grid;
-      grid-template-columns: 1.1fr 1fr;
+      grid-template-columns: 1.2fr 1fr; /* Adjusted column layout for wide-view prominence */
       background: var(--bg-card);
       border: 1px solid rgba(255, 255, 255, 0.05);
       border-top: 1px solid rgba(255, 255, 255, 0.12);
@@ -172,13 +172,13 @@
 
     /* LEFT PANEL: Showcase & Branding */
     .panel-left {
-      padding: clamp(24px, 4vw, 42px);
+      padding: clamp(30px, 4.5vw, 48px); /* Slightly increased padding for a wider, spacious look */
       background: linear-gradient(135deg, rgba(8, 12, 28, 0.7) 0%, rgba(4, 5, 15, 0.9) 100%);
       border-right: 1px solid rgba(255, 255, 255, 0.04);
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      gap: 24px;
+      gap: 28px;
       position: relative;
     }
 
@@ -236,22 +236,23 @@
       -webkit-text-fill-color: transparent;
     }
 
+    /* INTRADAY MOMENTUM TRADES TITLE */
     .hero-title h2 {
-      font-size: clamp(22px, 3vw, 30px);
-      font-weight: 800;
-      line-height: 1.25;
-      letter-spacing: -0.8px;
-      background: linear-gradient(135deg, #ffffff 30%, #94a3b8 100%);
+      font-size: clamp(28px, 4.2vw, 40px);
+      font-weight: 850;
+      line-height: 1.15;
+      letter-spacing: -1.2px;
+      background: linear-gradient(135deg, #ffffff 30%, #c7d2fe 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
 
     .hero-title p {
       color: var(--text-secondary);
-      font-size: 13.5px;
+      font-size: 14px;
       line-height: 1.55;
-      margin-top: 8px;
-      max-width: 380px;
+      margin-top: 10px;
+      max-width: 420px; /* Slightly widened to support wider layout */
     }
 
     /* Compact Stat Badges */
@@ -369,7 +370,7 @@
 
     /* RIGHT PANEL: Credentials & Verification Forms */
     .panel-right {
-      padding: clamp(24px, 4vw, 42px);
+      padding: clamp(30px, 4.5vw, 48px);
       display: flex;
       flex-direction: column;
       justify-content: center;
@@ -755,7 +756,7 @@
     }
 
     /* SEAMLESS AUTO-ADJUSTING RESPONSIVE LAYOUT ENGINE */
-    @media (max-width: 880px) {
+    @media (max-width: 920px) { /* Shifted from 880px to safely trigger stacking before columns squish */
       .portal-card {
         grid-template-columns: 1fr;
       }
@@ -785,7 +786,7 @@
         padding: 24px 16px;
       }
       .hero-title h2 {
-        font-size: 21px;
+        font-size: 26px; /* Retains crisp sizing on mobile devices */
       }
       .stat-card {
         padding: 8px 12px;
