@@ -38,6 +38,7 @@ from kiteconnect import KiteConnect, KiteTicker
 # OpenInterest FastAPI app (mounted by wrapper)
 import optioninterest as openinterest
 from heatmap_impl import build_market_heatmap_figure
+from dash import dcc, html, Input, Output, State, ctx
 
 # =============================================================================
 # LOGGING
@@ -2394,6 +2395,9 @@ def update_top_stats(_):
 # =============================================================================
 # SECTOR BARS
 # =============================================================================
+# NOTE: make sure you have this import at the top:
+# from dash import ctx
+
 @dash_app.callback(
     Output("sector-bars", "children"),
     Input("refresh_sectors", "n_intervals"),
@@ -2401,9 +2405,25 @@ def update_top_stats(_):
     Input("sectors-sort-dd", "value"),
 )
 def render_sector_bars(_n, sort_by_radio, sort_by_dd):
-    sort_by = (sort_by_dd or sort_by_radio or "DirR").strip()
-
+    """
+    Desktop uses RadioItems, mobile uses Dropdown.
+    Both components exist in the DOM (one is just hidden via CSS),
+    so we must pick the value based on which input triggered the callback.
+    """
     try:
+        trig = ctx.triggered_id
+
+        # Pick from the control that actually changed
+        if trig == "sectors-sort":
+            sort_by = sort_by_radio
+        elif trig == "sectors-sort-dd":
+            sort_by = sort_by_dd
+        else:
+            # interval refresh / first load: prefer whichever has a value
+            sort_by = sort_by_radio or sort_by_dd
+
+        sort_by = (sort_by or "DirR").strip()
+
         # -----------------------------
         # Metric selection
         # -----------------------------
@@ -2455,7 +2475,7 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
                 p90 = pct(abs_vals, 0.90)
                 robust_span = max(p80 * 1.20, p90 * 1.05, 0.50)
 
-            # KEY CHANGE: include real max so nothing gets clipped to the same height
+            # include real max so nothing gets clipped
             span = max(robust_span, max_abs)
             raw_min, raw_max = -span, +span
         else:
@@ -2533,7 +2553,6 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
             disp = sector.replace("_", " ").upper()
             val_str = f"{val:+.2f}"
 
-            # No clipping => no identical "maxed out" bars
             bar_px = to_px(val)
             if 0 < bar_px < bar_min_px:
                 bar_px = bar_min_px
@@ -2556,7 +2575,6 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
                                 [
                                     html.Div(
                                         className=("sector-hist-bar pos" if val >= 0 else "sector-hist-bar neg"),
-                                        # KEY CHANGE: keep decimals; don't round to whole px
                                         style={"height": f"{bar_px:.2f}px"},
                                     )
                                 ],
@@ -2589,7 +2607,6 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
             className="hint",
             style={"color": "red", "padding": "20px", "fontSize": "14px"},
         )
-
 
 # =============================================================================
 # SECTOR MODAL
