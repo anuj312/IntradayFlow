@@ -2404,6 +2404,9 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
     sort_by = (sort_by_dd or sort_by_radio or "DirR").strip()
 
     try:
+        # -----------------------------
+        # Metric selection
+        # -----------------------------
         if sort_by == "DirR":
             metric = "DirR"
         elif sort_by == "RVOLmMean":
@@ -2411,6 +2414,9 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
         else:
             metric = "RVOLmNetSum"
 
+        # -----------------------------
+        # Load cached aggregates
+        # -----------------------------
         with CACHE_LOCK:
             agg = dict(CACHE.get("sector_agg") or {})
 
@@ -2425,28 +2431,48 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
         vals = [float(m.get(metric, 0.0) or 0.0) for _, m in items]
         n = len(vals)
 
-        # Median-based scaling
+        # -----------------------------
+        # Robust span (percentile-based) BUT ensure no clipping:
+        # expand span to include true extrema so bars don't hit same height.
+        # -----------------------------
+        def pct(sorted_list, p: float) -> float:
+            if not sorted_list:
+                return 0.0
+            i = int(p * (len(sorted_list) - 1))
+            i = max(0, min(len(sorted_list) - 1, i))
+            return float(sorted_list[i])
+
         if n >= 4:
-            sorted_abs = sorted([abs(v) for v in vals])
-            median_abs = sorted_abs[n // 2]
-            span = median_abs * 3.0 if median_abs > 1e-9 else 1.0
-            span = max(span, 0.5)
-            raw_min = -span
-            raw_max = +span
+            abs_vals = sorted(abs(v) for v in vals)
+            max_abs = max(abs_vals) if abs_vals else 1.0
+
+            if metric == "DirR":
+                p75 = pct(abs_vals, 0.75)
+                p85 = pct(abs_vals, 0.85)
+                robust_span = max(p75 * 1.10, p85 * 1.00, 0.30)
+            else:
+                p80 = pct(abs_vals, 0.80)
+                p90 = pct(abs_vals, 0.90)
+                robust_span = max(p80 * 1.20, p90 * 1.05, 0.50)
+
+            # KEY CHANGE: include real max so nothing gets clipped to the same height
+            span = max(robust_span, max_abs)
+            raw_min, raw_max = -span, +span
         else:
             raw_min = min(vals) if vals else -1.0
             raw_max = max(vals) if vals else 1.0
 
-        vmin = min(raw_min, 0.0)
-        vmax = max(raw_max, 0.0)
-
+        # Ensure zero in range
+        vmin = min(float(raw_min), 0.0)
+        vmax = max(float(raw_max), 0.0)
         if (vmax - vmin) <= 1e-9:
             vmin, vmax = -1.0, 1.0
 
-        tick_min  = float(vmin)
-        tick_max  = float(vmax)
+        tick_min = float(vmin)
+        tick_max = float(vmax)
         axis_span = float(tick_max - tick_min) or 1.0
 
+        # Zero-line position in %
         zero_pct = ((tick_max - 0.0) / axis_span) * 100.0
         zero_pct = max(0.0, min(100.0, zero_pct))
 
@@ -2456,7 +2482,7 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
 
         pos_dom = max(0.0, tick_max)
         neg_dom = max(0.0, -tick_min)
-        eps     = 1e-12
+        eps = 1e-12
 
         def fmt(x: float) -> str:
             x = float(x)
@@ -2464,37 +2490,53 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
                 x = 0.0
             return f"{x:.2f}"
 
-        ticks      = [tick_max, tick_max / 2.0, 0.0, tick_min / 2.0, tick_min]
+        # Axis tick labels
+        ticks = [tick_max, tick_max / 2.0, 0.0, tick_min / 2.0, tick_min]
         axis_ticks = []
         for tv in ticks:
             top_pct = ((tick_max - float(tv)) / axis_span) * 100.0
             axis_ticks.append(
-                html.Div(fmt(tv), className="sector-axis-tick", style={"top": f"{top_pct:.2f}%"})
+                html.Div(
+                    fmt(tv),
+                    className="sector-axis-tick",
+                    style={"top": f"{top_pct:.2f}%"},
+                )
             )
 
-        axis     = html.Div(axis_ticks, className="sector-hist-axis", style={"height": f"{plot_h}px"})
+        axis = html.Div(axis_ticks, className="sector-hist-axis", style={"height": f"{plot_h}px"})
         children = [axis, html.Div(className="sector-hist-zero-line")]
-        bar_min_px = 4.0
+
+        # Reduce min height so small differences don't collapse visually
+        bar_min_px = 1.0
+
+        # Optional: boost separation (especially when one sector is huge)
+        GAMMA = 0.65 if metric == "DirR" else 1.0
+
+        def to_px(val: float) -> float:
+            if val >= 0:
+                if pos_dom <= 0 or pos_px <= 0:
+                    return 0.0
+                x = val / (pos_dom + eps)  # 0..1
+                x = max(0.0, min(1.0, x))
+                x = x ** GAMMA
+                return max(0.0, min(pos_px, x * pos_px))
+            else:
+                if neg_dom <= 0 or neg_px <= 0:
+                    return 0.0
+                x = (-val) / (neg_dom + eps)  # 0..1
+                x = max(0.0, min(1.0, x))
+                x = x ** GAMMA
+                return max(0.0, min(neg_px, x * neg_px))
 
         for sector, m in items:
-            val     = float(m.get(metric, 0.0) or 0.0)
-            disp    = sector.replace("_", " ").upper()
+            val = float(m.get(metric, 0.0) or 0.0)
+            disp = sector.replace("_", " ").upper()
             val_str = f"{val:+.2f}"
 
-            is_clipped = (val > tick_max) or (val < tick_min)
-            val_draw   = max(tick_min, min(tick_max, val))
-
-            if val_draw >= 0:
-                bar_px = (val_draw / (pos_dom + eps)) * pos_px if pos_dom > 0 and pos_px > 0 else 0.0
-                bar_px = min(max(bar_px, 0.0), pos_px)
-            else:
-                bar_px = ((-val_draw) / (neg_dom + eps)) * neg_px if neg_dom > 0 and neg_px > 0 else 0.0
-                bar_px = min(max(bar_px, 0.0), neg_px)
-
+            # No clipping => no identical "maxed out" bars
+            bar_px = to_px(val)
             if 0 < bar_px < bar_min_px:
                 bar_px = bar_min_px
-
-            tooltip_val_str = f"{val_str}" if is_clipped else val_str
 
             children.append(
                 dcc.Link(
@@ -2505,16 +2547,19 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
                         [
                             html.Div(
                                 [
-                                    html.Div(disp,            className="sector-hist-tip-name"),
-                                    html.Div(tooltip_val_str, className="sector-hist-tip-val"),
+                                    html.Div(disp, className="sector-hist-tip-name"),
+                                    html.Div(val_str, className="sector-hist-tip-val"),
                                 ],
                                 className="sector-hist-tooltip",
                             ),
                             html.Div(
-                                [html.Div(
-                                    className=("sector-hist-bar pos" if val >= 0 else "sector-hist-bar neg"),
-                                    style={"height": f"{bar_px:.0f}px"},
-                                )],
+                                [
+                                    html.Div(
+                                        className=("sector-hist-bar pos" if val >= 0 else "sector-hist-bar neg"),
+                                        # KEY CHANGE: keep decimals; don't round to whole px
+                                        style={"height": f"{bar_px:.2f}px"},
+                                    )
+                                ],
                                 className="sector-hist-track",
                                 style={
                                     "height": f"{plot_h}px",
@@ -2523,14 +2568,10 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
                                     "marginBottom": "16px",
                                 },
                             ),
-                            html.Div(
-                                disp,
-                                className="sector-hist-name",
-                                style={"marginTop": "4px"},
-                            ),
+                            html.Div(disp, className="sector-hist-name", style={"marginTop": "4px"}),
                         ],
                         className="sector-hist-col",
-                        title=f"{metric} {tooltip_val_str}",
+                        title=f"{metric} {val_str}",
                     ),
                 )
             )
