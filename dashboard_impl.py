@@ -2392,12 +2392,6 @@ def update_top_stats(_):
     return html.Div(chips, className="top-stats-wrap")
 
 
-# =============================================================================
-# SECTOR BARS
-# =============================================================================
-# NOTE: make sure you have this import at the top:
-# from dash import ctx
-
 @dash_app.callback(
     Output("sector-bars", "children"),
     Input("refresh_sectors", "n_intervals"),
@@ -2405,11 +2399,6 @@ def update_top_stats(_):
     Input("sectors-sort-dd", "value"),
 )
 def render_sector_bars(_n, sort_by_radio, sort_by_dd):
-    """
-    Desktop uses RadioItems, mobile uses Dropdown.
-    Both components exist in the DOM (one is just hidden via CSS),
-    so we must pick the value based on which input triggered the callback.
-    """
     try:
         trig = ctx.triggered_id
 
@@ -2419,7 +2408,6 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
         elif trig == "sectors-sort-dd":
             sort_by = sort_by_dd
         else:
-            # interval refresh / first load: prefer whichever has a value
             sort_by = sort_by_radio or sort_by_dd
 
         sort_by = (sort_by or "DirR").strip()
@@ -2452,8 +2440,7 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
         n = len(vals)
 
         # -----------------------------
-        # Robust span (percentile-based) BUT ensure no clipping:
-        # expand span to include true extrema so bars don't hit same height.
+        # Robust span (CAP outliers so bars look bigger)
         # -----------------------------
         def pct(sorted_list, p: float) -> float:
             if not sorted_list:
@@ -2464,27 +2451,28 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
 
         if n >= 4:
             abs_vals = sorted(abs(v) for v in vals)
-            max_abs = max(abs_vals) if abs_vals else 1.0
 
             if metric == "DirR":
-                p75 = pct(abs_vals, 0.75)
-                p85 = pct(abs_vals, 0.85)
-                robust_span = max(p75 * 1.10, p85 * 1.00, 0.30)
+                # Momentum: usually tighter distribution
+                span = max(pct(abs_vals, 0.85) * 1.15, 0.30)
             else:
-                p80 = pct(abs_vals, 0.80)
-                p90 = pct(abs_vals, 0.90)
-                robust_span = max(p80 * 1.20, p90 * 1.05, 0.50)
-
-            # include real max so nothing gets clipped
-            span = max(robust_span, max_abs)
-            raw_min, raw_max = -span, +span
+                # RVOL metrics: heavier tail
+                span = max(pct(abs_vals, 0.90) * 1.20, 0.50)
         else:
-            raw_min = min(vals) if vals else -1.0
-            raw_max = max(vals) if vals else 1.0
+            span = max(max(abs(v) for v in vals), 1.0) if vals else 1.0
 
-        # Ensure zero in range
-        vmin = min(float(raw_min), 0.0)
-        vmax = max(float(raw_max), 0.0)
+        span = float(span)
+
+        # Clip values to span (so outliers don’t flatten everything)
+        clipped_vals = [max(-span, min(span, v)) for v in vals]
+
+        # Axis bounds from clipped values (not raw max_abs)
+        raw_min = min(clipped_vals) if clipped_vals else -span
+        raw_max = max(clipped_vals) if clipped_vals else +span
+
+        # Ensure zero is included
+        vmin = min(raw_min, 0.0)
+        vmax = max(raw_max, 0.0)
         if (vmax - vmin) <= 1e-9:
             vmin, vmax = -1.0, 1.0
 
@@ -2526,11 +2514,11 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
         axis = html.Div(axis_ticks, className="sector-hist-axis", style={"height": f"{plot_h}px"})
         children = [axis, html.Div(className="sector-hist-zero-line")]
 
-        # Reduce min height so small differences don't collapse visually
-        bar_min_px = 1.0
+        # Make tiny differences visible
+        bar_min_px = 2.0
 
-        # Optional: boost separation (especially when one sector is huge)
-        GAMMA = 0.65 if metric == "DirR" else 1.0
+        # Boost separation a bit (also helps “flat” feel)
+        GAMMA = 0.70 if metric == "DirR" else 0.85
 
         def to_px(val: float) -> float:
             if val >= 0:
@@ -2553,7 +2541,10 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
             disp = sector.replace("_", " ").upper()
             val_str = f"{val:+.2f}"
 
-            bar_px = to_px(val)
+            clipped = abs(val) > span
+            val_eff = max(-span, min(span, val))
+
+            bar_px = to_px(val_eff)
             if 0 < bar_px < bar_min_px:
                 bar_px = bar_min_px
 
@@ -2574,9 +2565,14 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
                             html.Div(
                                 [
                                     html.Div(
-                                        className=("sector-hist-bar pos" if val >= 0 else "sector-hist-bar neg"),
+                                        className=("sector-hist-bar pos" if val_eff >= 0 else "sector-hist-bar neg"),
                                         style={"height": f"{bar_px:.2f}px"},
-                                    )
+                                    ),
+                                    # Optional: cap marker if value is clipped
+                                    html.Div(
+                                        className="sector-bar-cap",
+                                        style={"top": "6px"} if val_eff >= 0 else {"bottom": "6px"},
+                                    ) if clipped else None,
                                 ],
                                 className="sector-hist-track",
                                 style={
@@ -2607,6 +2603,7 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
             className="hint",
             style={"color": "red", "padding": "20px", "fontSize": "14px"},
         )
+
 
 # =============================================================================
 # SECTOR MODAL
