@@ -184,7 +184,7 @@ SECTOR_DEFINITIONS = {
         "HDFCLIFE", "LICI", "LICHSGFIN",
         "PNBHOUSING", "MUTHOOTFIN",
         "MANAPPURAM", "CHOLAFIN",
-        "PFC", "RECLTD",
+        "PFC", "RECLTD","MOTILALOFS",
         "HDFCAMC", "360ONE",
         "KFINTECH", "NUVAMA",
         "PAYTM", "POLICYBZR",
@@ -2440,7 +2440,7 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
         n = len(vals)
 
         # -----------------------------
-        # Robust span (CAP outliers so bars look bigger)
+        # Helpers
         # -----------------------------
         def pct(sorted_list, p: float) -> float:
             if not sorted_list:
@@ -2449,35 +2449,36 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
             i = max(0, min(len(sorted_list) - 1, i))
             return float(sorted_list[i])
 
-        if n >= 4:
-            abs_vals = sorted(abs(v) for v in vals)
+        def fmt(x: float) -> str:
+            x = float(x)
+            if abs(x) < 5e-7:
+                x = 0.0
+            return f"{x:.2f}"
 
-            if metric == "DirR":
-                # Momentum: usually tighter distribution
-                span = max(pct(abs_vals, 0.85) * 1.15, 0.30)
-            else:
-                # RVOL metrics: heavier tail
-                span = max(pct(abs_vals, 0.90) * 1.20, 0.50)
+        # -----------------------------
+        # Make UP/DOWN more visible:
+        # Asymmetric percentile caps (separate + and -)
+        # -----------------------------
+        pos_abs = sorted([v for v in vals if v > 0])          # positive values
+        neg_abs = sorted([abs(v) for v in vals if v < 0])     # absolute of negative values
+
+        if metric == "DirR":
+            CAP_Q   = 0.82
+            CAP_MUL = 1.25
+            MIN_CAP = 0.30
+            GAMMA   = 0.50   # <1 => boosts small values visually
         else:
-            span = max(max(abs(v) for v in vals), 1.0) if vals else 1.0
+            CAP_Q   = 0.88
+            CAP_MUL = 1.20
+            MIN_CAP = 0.50
+            GAMMA   = 0.62
 
-        span = float(span)
+        pos_cap = max(pct(pos_abs, CAP_Q) * CAP_MUL, MIN_CAP) if pos_abs else MIN_CAP
+        neg_cap = max(pct(neg_abs, CAP_Q) * CAP_MUL, MIN_CAP) if neg_abs else MIN_CAP
 
-        # Clip values to span (so outliers don’t flatten everything)
-        clipped_vals = [max(-span, min(span, v)) for v in vals]
-
-        # Axis bounds from clipped values (not raw max_abs)
-        raw_min = min(clipped_vals) if clipped_vals else -span
-        raw_max = max(clipped_vals) if clipped_vals else +span
-
-        # Ensure zero is included
-        vmin = min(raw_min, 0.0)
-        vmax = max(raw_max, 0.0)
-        if (vmax - vmin) <= 1e-9:
-            vmin, vmax = -1.0, 1.0
-
-        tick_min = float(vmin)
-        tick_max = float(vmax)
+        # Axis bounds from caps (NOT from true max)
+        tick_max = float(pos_cap)
+        tick_min = -float(neg_cap)
         axis_span = float(tick_max - tick_min) or 1.0
 
         # Zero-line position in %
@@ -2491,12 +2492,6 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
         pos_dom = max(0.0, tick_max)
         neg_dom = max(0.0, -tick_min)
         eps = 1e-12
-
-        def fmt(x: float) -> str:
-            x = float(x)
-            if abs(x) < 5e-7:
-                x = 0.0
-            return f"{x:.2f}"
 
         # Axis tick labels
         ticks = [tick_max, tick_max / 2.0, 0.0, tick_min / 2.0, tick_min]
@@ -2514,11 +2509,8 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
         axis = html.Div(axis_ticks, className="sector-hist-axis", style={"height": f"{plot_h}px"})
         children = [axis, html.Div(className="sector-hist-zero-line")]
 
-        # Make tiny differences visible
-        bar_min_px = 2.0
-
-        # Boost separation a bit (also helps “flat” feel)
-        GAMMA = 0.70 if metric == "DirR" else 0.85
+        # Bigger minimum so “small” bars don’t look like dots
+        bar_min_px = 6.0
 
         def to_px(val: float) -> float:
             if val >= 0:
@@ -2541,8 +2533,12 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
             disp = sector.replace("_", " ").upper()
             val_str = f"{val:+.2f}"
 
-            clipped = abs(val) > span
-            val_eff = max(-span, min(span, val))
+            # Clip separately for + and -
+            clipped = (val > pos_cap) or (val < -neg_cap)
+            if val >= 0:
+                val_eff = min(val, pos_cap)
+            else:
+                val_eff = max(val, -neg_cap)
 
             bar_px = to_px(val_eff)
             if 0 < bar_px < bar_min_px:
@@ -2568,7 +2564,7 @@ def render_sector_bars(_n, sort_by_radio, sort_by_dd):
                                         className=("sector-hist-bar pos" if val_eff >= 0 else "sector-hist-bar neg"),
                                         style={"height": f"{bar_px:.2f}px"},
                                     ),
-                                    # Optional: cap marker if value is clipped
+                                    # Optional cap marker (only if you added CSS)
                                     html.Div(
                                         className="sector-bar-cap",
                                         style={"top": "6px"} if val_eff >= 0 else {"bottom": "6px"},
